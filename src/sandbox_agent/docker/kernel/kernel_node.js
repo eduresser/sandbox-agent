@@ -46,6 +46,19 @@ const sandbox = {
 
 const context = vm.createContext(sandbox);
 
+// ── const/let → var rewrite ─────────────────────────────
+// In a persistent VM context, `const` and `let` declarations cannot be
+// re-declared across cells (V8 treats it as a SyntaxError).  Rewriting
+// them to `var` allows re-declaration while keeping variables in the
+// sandbox object — the same strategy used by Node.js's own REPL.
+
+function rewriteConstLet(code) {
+  return code.replace(
+    /^([ \t]*)(const|let)\s/gm,
+    (_match, indent, _keyword) => `${indent}var `,
+  );
+}
+
 // ── Execution ─────────────────────────────────────────
 
 async function execute(code, timeout = 30) {
@@ -75,15 +88,17 @@ async function execute(code, timeout = 30) {
   try {
     let result;
 
+    // Rewrite const/let → var so re-declarations across cells don't fail.
+    let source = rewriteConstLet(code);
+
     // Decide execution strategy by parsing (no execution) first.
     // vm.Script only parses — if it throws SyntaxError for top-level
     // `await`, we check whether wrapping in an async IIFE fixes it.
-    let source = code;
     try {
-      new vm.Script(code);
+      new vm.Script(source);
     } catch (parseErr) {
-      if (parseErr instanceof SyntaxError && code.includes("await")) {
-        const wrapped = `(async () => {\n${code}\n})()`;
+      if (parseErr instanceof SyntaxError && source.includes("await")) {
+        const wrapped = `(async () => {\n${source}\n})()`;
         try {
           new vm.Script(wrapped);
           source = wrapped;
