@@ -8,6 +8,7 @@ LangGraph agent with Docker-based sandboxed code execution. Each session is an i
 - **Hardened containers** — non-root user, PID limits, memory+swap limits, tmpfs-only writable dirs, `no-new-privileges`
 - **Crash detection** — OOM-kill, fork bombs, segfaults are detected and reported clearly to the agent
 - **Persistent state** — variables survive between code executions (like Jupyter cells)
+- **Async support** — Promises (Node.js) and coroutines (Python) are automatically awaited
 - **Multi-runtime** — Python and Node.js support
 - **Runtime package install** — `pip install` / `npm install` work both at session creation and via terminal
 - **5 tools** — create_session, execute_code, execute_terminal, upload_file, stop_session
@@ -68,6 +69,34 @@ r2 = manager.execute_code(sid, "df.shape")
 print(r2.result)
 
 manager.stop_session(sid)
+```
+
+### Async Code
+
+Both runtimes handle asynchronous code transparently:
+
+**Node.js** — if the last expression returns a Promise, the kernel awaits it before collecting output. Top-level `await` is also supported (falls back to an async IIFE wrapper when needed).
+
+```javascript
+const axios = require('axios');
+async function fetchData() {
+    const resp = await axios.get('https://api.example.com/data');
+    console.log(resp.data);
+}
+fetchData(); // Promise is awaited automatically
+```
+
+**Python** — IPython's `autoawait` handles top-level `await`. If a cell returns an unawaited coroutine, the kernel detects it and runs it with `asyncio.run()`.
+
+```python
+import aiohttp
+
+async def fetch_data():
+    async with aiohttp.ClientSession() as session:
+        resp = await session.get('https://api.example.com/data')
+        print(await resp.text())
+
+fetch_data()  # coroutine is detected and executed automatically
 ```
 
 ## Container Security

@@ -6,7 +6,9 @@ and accepts commands via UNIX domain socket.
 No HTTP. No Flask. No extra dependencies beyond IPython.
 """
 
+import asyncio
 import base64
+import inspect
 import io
 import json
 import os
@@ -112,13 +114,24 @@ def execute(code: str, timeout: int = 30) -> dict:
 
     try:
         r = shell.run_cell(code, store_history=True, silent=False)
+
+        result_value = r.result
+
+        # If the last expression is a coroutine/awaitable that IPython did
+        # not automatically await (e.g. `fetch_data()` without `await`),
+        # run it now so async output is captured.
+        if r.success and inspect.isawaitable(result_value):
+            result_value = asyncio.run(
+                asyncio.wait_for(result_value, timeout=timeout)
+            )
+
         signal.alarm(0)
 
         response["stdout"] = truncate(cap_out.getvalue())
         response["stderr"] = truncate(cap_err.getvalue())
 
         if r.success:
-            response["result"] = get_rich_result(r.result)
+            response["result"] = get_rich_result(result_value)
         else:
             response["success"] = False
             err = r.error_in_exec or r.error_before_exec

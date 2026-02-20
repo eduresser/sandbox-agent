@@ -70,22 +70,48 @@ async function execute(code, timeout = 30) {
     figures: [],
   };
 
+  const timeoutMs = timeout * 1000;
+
   try {
     let result;
 
-    if (code.includes("await ")) {
-      const wrapped = `(async () => { ${code} })()`;
-      result = await vm.runInContext(wrapped, context, {
-        filename: "<cell>",
-        timeout: timeout * 1000,
-        breakOnSigint: true,
-      });
-    } else {
+    // 1. Try executing the code directly (handles sync code and async
+    //    functions whose call returns a Promise as the completion value).
+    // 2. If top-level `await` causes a SyntaxError, wrap in an async IIFE.
+    try {
       result = vm.runInContext(code, context, {
         filename: "<cell>",
-        timeout: timeout * 1000,
+        timeout: timeoutMs,
         breakOnSigint: true,
       });
+    } catch (err) {
+      if (err instanceof SyntaxError && code.includes("await ")) {
+        const wrapped = `(async () => {\n${code}\n})()`;
+        result = vm.runInContext(wrapped, context, {
+          filename: "<cell>",
+          timeout: timeoutMs,
+          breakOnSigint: true,
+        });
+      } else {
+        throw err;
+      }
+    }
+
+    // If the completion value is a thenable (Promise), await it so that
+    // async output (console.log inside .then / async functions) is captured.
+    if (result != null && typeof result.then === "function") {
+      let timer;
+      const timeoutPromise = new Promise((_, reject) => {
+        timer = setTimeout(
+          () => reject(new Error(`Async execution exceeded ${timeout}s`)),
+          timeoutMs,
+        );
+      });
+      try {
+        result = await Promise.race([result, timeoutPromise]);
+      } finally {
+        clearTimeout(timer);
+      }
     }
 
     response.stdout = stdoutChunks.join("\n").slice(0, MAX_OUTPUT);
