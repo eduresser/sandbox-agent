@@ -75,27 +75,30 @@ async function execute(code, timeout = 30) {
   try {
     let result;
 
-    // 1. Try executing the code directly (handles sync code and async
-    //    functions whose call returns a Promise as the completion value).
-    // 2. If top-level `await` causes a SyntaxError, wrap in an async IIFE.
+    // Decide execution strategy by parsing (no execution) first.
+    // vm.Script only parses — if it throws SyntaxError for top-level
+    // `await`, we check whether wrapping in an async IIFE fixes it.
+    let source = code;
     try {
-      result = vm.runInContext(code, context, {
-        filename: "<cell>",
-        timeout: timeoutMs,
-        breakOnSigint: true,
-      });
-    } catch (err) {
-      if (err instanceof SyntaxError && code.includes("await ")) {
+      new vm.Script(code);
+    } catch (parseErr) {
+      if (parseErr instanceof SyntaxError && code.includes("await")) {
         const wrapped = `(async () => {\n${code}\n})()`;
-        result = vm.runInContext(wrapped, context, {
-          filename: "<cell>",
-          timeout: timeoutMs,
-          breakOnSigint: true,
-        });
-      } else {
-        throw err;
+        try {
+          new vm.Script(wrapped);
+          source = wrapped;
+        } catch {
+          // Wrapper doesn't fix the SyntaxError — let execution
+          // report the original error to the user.
+        }
       }
     }
+
+    result = vm.runInContext(source, context, {
+      filename: "<cell>",
+      timeout: timeoutMs,
+      breakOnSigint: true,
+    });
 
     // If the completion value is a thenable (Promise), await it so that
     // async output (console.log inside .then / async functions) is captured.

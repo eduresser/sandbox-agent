@@ -15,6 +15,8 @@ class SessionInfo:
     runtime: str
     status: str
     dependencies: dict[str, str] = field(default_factory=dict)
+    stdout: str = ""
+    stderr: str = ""
 
 
 @dataclass

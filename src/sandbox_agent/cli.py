@@ -18,8 +18,7 @@ from sandbox_agent.agent.graph import build_agent
 from sandbox_agent.sandbox.manager import SandboxManager
 from sandbox_agent.settings import get_settings
 
-logging.basicConfig(level=logging.WARNING)
-logger = logging.getLogger(__name__)
+logging.disable(logging.CRITICAL)
 
 _MAX_TOOL_OUTPUT_LINES = 60
 
@@ -71,7 +70,6 @@ def _format_tool_output(msg: ToolMessage) -> Panel:
 
     if not is_error and isinstance(content, str) and "Error invoking tool" in content:
         is_error = True
-        logger.error("Tool invocation error: %s", content)
 
     border = "red" if is_error else "green"
     status = "[red]ERRO" if is_error else "[green]OK"

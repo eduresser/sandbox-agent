@@ -36,15 +36,18 @@ def create_create_session_tool(manager: SandboxManager):
         except Exception as exc:
             return error_response(manager, exc)
 
-        return json.dumps(
-            {
-                "success": True,
-                "session_id": info.session_id,
-                "runtime": info.runtime,
-                "status": info.status,
-                "dependencies": info.dependencies,
-            },
-            ensure_ascii=False,
-        )
+        result: dict = {
+            "success": True,
+            "session_id": info.session_id,
+            "runtime": info.runtime,
+            "status": info.status,
+            "dependencies": info.dependencies,
+        }
+        if info.stdout:
+            result["stdout"] = info.stdout
+        if info.stderr:
+            result["stderr"] = info.stderr
+
+        return json.dumps(result, ensure_ascii=False)
 
     return create_session

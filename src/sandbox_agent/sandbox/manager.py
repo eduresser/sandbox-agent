@@ -11,7 +11,6 @@ from __future__ import annotations
 import atexit
 import io
 import json
-import logging
 import signal
 import subprocess
 import tarfile
@@ -25,8 +24,6 @@ import docker.errors
 
 from sandbox_agent.sandbox.models import ExecutionResult, SessionInfo, TerminalResult
 from sandbox_agent.settings import get_settings
-
-logger = logging.getLogger(__name__)
 
 SANDBOX_UID = 65532
 SANDBOX_GID = 65532
@@ -82,14 +79,12 @@ class SandboxManager:
         try:
             self.client.images.get(config["image"])
         except docker.errors.ImageNotFound:
-            logger.info("Building %s ...", config["image"])
             self.client.images.build(
                 path=str(self.docker_dir),
                 dockerfile=config["dockerfile"],
                 tag=config["image"],
                 rm=True,
             )
-            logger.info("Image %s built.", config["image"])
 
     # ── Container Health ───────────────────────────────
 
@@ -295,7 +290,8 @@ class SandboxManager:
 
     def _install_initial_packages(self, session_id: str, packages: dict[str, str]) -> None:
         """Install packages during session creation. Runs as root so packages
-        land in the system site-packages / global node_modules."""
+        land in the system site-packages / global node_modules.
+        Captures stdout/stderr into the SessionInfo so callers can inspect them."""
         info = self.sessions[session_id]
         config = RUNTIME_CONFIG[info.runtime]
         container = self._containers[session_id]
@@ -312,9 +308,8 @@ class SandboxManager:
             **({"user": user} if user else {}),
         )
 
-        if exit_code != 0:
-            stderr = (output[1] or b"").decode(errors="replace")
-            logger.warning("Failed to install initial packages %s: %s", specs, stderr[-500:])
+        info.stdout = (output[0] or b"").decode(errors="replace")
+        info.stderr = (output[1] or b"").decode(errors="replace")
 
     def upload_file(
         self,
