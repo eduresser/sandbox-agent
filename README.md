@@ -1,6 +1,6 @@
 # Sandbox Agent
 
-LangGraph agent with Docker-based sandboxed code execution. Each session is an isolated Docker container with a persistent kernel (IPython for Python, vm.createContext for Node.js).
+LangGraph agent with Docker-based sandboxed code execution. Each session is an isolated Docker container with a persistent kernel (IPython for Python, vm.createContext for Node.js). Available as an interactive CLI or as an MCP server for integration with Cursor, Claude Desktop, and other MCP-compatible clients.
 
 ## Features
 
@@ -12,6 +12,7 @@ LangGraph agent with Docker-based sandboxed code execution. Each session is an i
 - **Multi-runtime** — Python and Node.js support
 - **Runtime package install** — `pip install` / `npm install` work both at session creation and via terminal
 - **5 tools** — create_session, execute_code, execute_terminal, upload_file, stop_session
+- **MCP server** — expose the same tools via Model Context Protocol (stdio transport)
 - **Auto-cleanup** — all containers are stopped and removed when the agent exits
 
 ## Prerequisites
@@ -43,6 +44,46 @@ cp .env.example .env
 ```bash
 uv run sandbox-agent
 ```
+
+### MCP Server
+
+Run the MCP server (stdio transport) for integration with Cursor, Claude Desktop, or any MCP-compatible client:
+
+```bash
+uv run sandbox-agent-mcp
+```
+
+#### Cursor
+
+Add to `~/.cursor/mcp.json`:
+
+```json
+{
+  "mcpServers": {
+    "sandbox-agent": {
+      "command": "uv",
+      "args": ["--directory", "/path/to/sandbox-agent", "run", "sandbox-agent-mcp"]
+    }
+  }
+}
+```
+
+#### Claude Desktop
+
+Add to the Claude Desktop MCP config:
+
+```json
+{
+  "mcpServers": {
+    "sandbox-agent": {
+      "command": "uv",
+      "args": ["--directory", "/path/to/sandbox-agent", "run", "sandbox-agent-mcp"]
+    }
+  }
+}
+```
+
+The MCP server exposes the same 5 tools as the CLI agent. The `upload_file` tool accepts file content directly (as text or base64) since MCP clients don't share a filesystem with the server.
 
 ### Programmatic
 
@@ -143,10 +184,13 @@ flowchart LR
     subgraph host [Host]
         CLI[CLI / Rich REPL]
         Agent[LangGraph Agent]
-        Tools[Tools Layer]
+        Tools[LangChain Tools]
+        MCP[MCP Server / FastMCP]
+        MCPTools[MCP Tools]
         SM[SandboxManager]
 
         CLI --> Agent --> Tools --> SM
+        MCP --> MCPTools --> SM
     end
 
     subgraph pyContainer ["Container sandbox-xxxx (Python)"]
