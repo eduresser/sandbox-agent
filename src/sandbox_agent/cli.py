@@ -23,13 +23,25 @@ logging.disable(logging.CRITICAL)
 _MAX_TOOL_OUTPUT_LINES = 60
 
 
-def _format_tool_input(tool_call: dict[str, Any]) -> Panel:
+_RUNTIME_LEXER: dict[str, str] = {
+    "python": "python",
+    "node": "javascript",
+}
+
+
+def _format_tool_input(tool_call: dict[str, Any], manager: SandboxManager | None = None) -> Panel:
     name = tool_call.get("name", "?")
     args = tool_call.get("args", {})
 
     if name == "execute_code" and "code" in args:
         code = args["code"]
-        body = Syntax(code, "python", theme="monokai", line_numbers=True, word_wrap=True)
+        lexer = "python"
+        session_id = args.get("session_id", "")
+        if manager and session_id:
+            info = manager.sessions.get(session_id)
+            if info:
+                lexer = _RUNTIME_LEXER.get(info.runtime, "python")
+        body = Syntax(code, lexer, theme="monokai", line_numbers=True, word_wrap=True)
     elif name == "execute_terminal" and "command" in args:
         body = Syntax(args["command"], "bash", theme="monokai", word_wrap=True)
     else:
@@ -181,7 +193,7 @@ def main() -> None:
                     for msg in new_msgs:
                         if isinstance(msg, AIMessage) and getattr(msg, "tool_calls", None):
                             for tc in msg.tool_calls:
-                                console.print(_format_tool_input(tc))
+                                console.print(_format_tool_input(tc, manager))
 
                         if isinstance(msg, ToolMessage):
                             console.print(_format_tool_output(msg))
