@@ -286,9 +286,9 @@ PHASE 4 — PRESENT AND JUSTIFY:
     • Simplicity and maintainability
     • Trade-offs made and why they are acceptable
   - Use a clear format:
-    "✅ Solução recomendada: [X] — [razão principal]"
-    "🔄 Alternativa 1: [Y] — [quando seria melhor]"
-    "🔄 Alternativa 2: [Z] — [quando seria melhor]"
+    "✅ Recommended solution: [X] — [main reason]"
+    "🔄 Alternative 1: [Y] — [when it would be better]"
+    "🔄 Alternative 2: [Z] — [when it would be better]"
 
 PHASE 5 — LAST RESORT ONLY:
   You may ONLY declare something not fully solvable after:
