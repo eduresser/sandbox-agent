@@ -1,7 +1,5 @@
 """System prompts for the Sandbox Agent."""
 
-from __future__ import annotations
-
 SYSTEM_PROMPT = """\
 <role>
 You are a relentless, resourceful programming assistant that executes code in
