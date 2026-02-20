@@ -4,9 +4,12 @@ LangGraph agent with Docker-based sandboxed code execution. Each session is an i
 
 ## Features
 
-- **Docker isolation** — each session runs in its own container, no ports exposed
+- **Docker isolation** — each session runs in its own container, no ports exposed, no host volumes
+- **Hardened containers** — non-root user, PID limits, memory+swap limits, tmpfs-only writable dirs, `no-new-privileges`
+- **Crash detection** — OOM-kill, fork bombs, segfaults are detected and reported clearly to the agent
 - **Persistent state** — variables survive between code executions (like Jupyter cells)
 - **Multi-runtime** — Python and Node.js support
+- **Runtime package install** — `pip install` / `npm install` work both at session creation and via terminal
 - **5 tools** — create_session, execute_code, execute_terminal, upload_file, stop_session
 - **Auto-cleanup** — all containers are stopped and removed when the agent exits
 
@@ -37,7 +40,7 @@ cp .env.example .env
 ### CLI
 
 ```bash
-sandbox-agent
+uv run sandbox-agent
 ```
 
 ### Programmatic
@@ -65,6 +68,36 @@ r2 = manager.execute_code(sid, "df.shape")
 print(r2.result)
 
 manager.stop_session(sid)
+```
+
+## Container Security
+
+Each container is created with the following protections:
+
+| Protection | Setting | Effect |
+|---|---|---|
+| Memory limit | `512m` (no swap) | OOM-kill on overflow, host unaffected |
+| PID limit | `128` | Fork bombs are contained and killed |
+| CPU quota | `50%` of 1 core | Prevents CPU starvation on host |
+| Writable dirs | tmpfs only (`/workspace`, `/tmp`, `/home/sandbox`) | Cannot fill host disk |
+| tmpfs size | `200m` per mount | Limits in-container disk usage |
+| User | `sandbox` (UID 65532) | No root inside container |
+| Privileges | `no-new-privileges` | Cannot escalate via setuid/setgid |
+| Network | Configurable (enabled by default) | Can be disabled per session |
+
+When a container crashes, the agent receives a clear `CONTAINER_DIED` error with the reason (OOM-killed, SIGKILL, segfault, etc.) and a hint to recreate the session.
+
+## Configuration
+
+All settings can be overridden via environment variables or `.env`:
+
+```bash
+CONTAINER_MEMORY_LIMIT=512m
+CONTAINER_CPU_QUOTA=50000
+CONTAINER_PIDS_LIMIT=128
+CONTAINER_TMPFS_SIZE=200m
+EXECUTION_TIMEOUT_SECONDS=30
+MAX_SESSIONS=5
 ```
 
 ## Architecture
@@ -110,5 +143,5 @@ flowchart LR
 
 ```bash
 # Requires Docker running
-pytest tests/ -v
+uv run pytest tests/ -v
 ```
