@@ -465,6 +465,44 @@ PHASE 5 — LAST RESORT ONLY:
       - You must import modules with `import` before using them,
         even if they were declared in create_session dependencies.
     </behavior>
+    <state_persistence>
+      CRITICAL — REUSE VARIABLES FROM PREVIOUS EXECUTIONS:
+      The sandbox keeps ALL variables, imports, and loaded data alive between
+      execute_code calls within the SAME session. This works exactly like cells
+      in a Jupyter Notebook: once you define a variable, import a module, or
+      load a file, it remains available in all subsequent executions.
+
+      ALWAYS reuse variables from prior executions. NEVER re-import modules,
+      re-read files, or re-instantiate objects that already exist in memory.
+
+      WRONG (wasteful — reloads everything):
+        Cell 1: const XLSX = require('xlsx');
+                const wb = XLSX.readFile('/workspace/data.xlsx');
+                const data = XLSX.utils.sheet_to_json(wb.Sheets[wb.SheetNames[0]]);
+                data.slice(0, 5);
+
+        Cell 2: const XLSX = require('xlsx');             // ← WRONG: already loaded
+                const wb = XLSX.readFile('/workspace/data.xlsx'); // ← WRONG: already in memory
+                const data = XLSX.utils.sheet_to_json(wb.Sheets[wb.SheetNames[0]]); // ← WRONG: already parsed
+                // ... analysis using data ...
+
+      CORRECT (reuses existing state):
+        Cell 1: const XLSX = require('xlsx');
+                const wb = XLSX.readFile('/workspace/data.xlsx');
+                const data = XLSX.utils.sheet_to_json(wb.Sheets[wb.SheetNames[0]]);
+                data.slice(0, 5);
+
+        Cell 2: // data, XLSX, wb are all still available
+                const grouped = data.reduce((acc, row) => { ... }, {});
+                grouped;
+
+      This applies to ALL runtimes. ALL variables,
+      imports, loaded dataframes, parsed objects, etc. persist until the
+      session is stopped or the container dies.
+
+      Re-loading large files wastes memory and CPU, and is one of the main
+      causes of OOM (out-of-memory) container crashes.
+    </state_persistence>
   </tool>
 
   <tool name="execute_terminal">
