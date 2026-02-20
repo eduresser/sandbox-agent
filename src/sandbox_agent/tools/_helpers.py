@@ -28,8 +28,12 @@ def error_response(manager: SandboxManager, exc: Exception) -> str:
             "hint": (
                 "The sandbox container crashed and is no longer usable. "
                 "Call stop_session to clean it up, then create_session to start a fresh one. "
-                "If this was caused by user code (e.g. memory exhaustion, fork bomb), "
-                "warn the user and avoid re-running the same code."
+                "BEFORE re-running code, diagnose the root cause: "
+                "(1) Did you upload_file to THIS session? Each session has its own "
+                "filesystem — files uploaded to another session are NOT available here. "
+                "(2) Did the code exhaust memory? "
+                "(3) Did callback-based async code throw an unhandled error? "
+                "NEVER re-run the exact same code that crashed a container."
             ),
             "active_sessions": sessions,
         }

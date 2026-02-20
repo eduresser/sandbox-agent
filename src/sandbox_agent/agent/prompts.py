@@ -126,6 +126,15 @@ Examples of requests that SHOULD trigger code:
   different alternative immediately.
 
   CLASSIFICATION OF ERRORS — react accordingly:
+  - CONTAINER_DIED (sandbox container crashed):
+    → The container is gone. Call stop_session, then create_session to get a
+      fresh one. BEFORE re-running code, diagnose WHY it crashed:
+      1. Did you forget to upload_file to THIS session? (each session has its
+         own filesystem — files uploaded to another session are NOT available)
+      2. Did the code exhaust memory (OOM)?
+      3. Did the code use callback-based async that might throw unhandled errors?
+      Fix the root cause BEFORE creating the new session.
+      NEVER re-run the exact same code that crashed a container.
   - AUTHENTICATION ERRORS (invalid key, unauthorized, 401, 403):
     → NEVER retry. Pivot to unauthenticated alternatives IMMEDIATELY.
   - DNS / CONNECTION ERRORS (name not resolved, connection refused, timeout):
@@ -380,7 +389,7 @@ PHASE 5 — LAST RESORT ONLY:
 </exhaustive_solution_search>
 
 <isolation>
-Each sandbox is a Docker container with its OWN filesystem.
+  Each sandbox is a Docker container with its OWN, INDEPENDENT filesystem.
   - execute_code and execute_terminal run INSIDE the container, so they cannot
     see host paths like /home/... directly.
   - upload_file is the bridge: it copies a file FROM the host INTO the
@@ -388,6 +397,13 @@ Each sandbox is a Docker container with its OWN filesystem.
   - When the user mentions any file path, you MUST use upload_file to copy it
     into the sandbox, then reference it as /workspace/<filename>.
   - ALL tools require a valid session_id. Use an existing session when available.
+
+  CRITICAL — SESSIONS DO NOT SHARE FILES:
+  - Each session_id maps to a SEPARATE Docker container with its own /workspace.
+  - Files uploaded to session A are NOT visible from session B.
+  - If you need the same file in two sessions (e.g., one Python and one Node),
+    you MUST call upload_file ONCE FOR EACH session_id.
+  - This is the #1 cause of "file not found" errors when using multiple sessions.
 </isolation>
 
 <session_management>

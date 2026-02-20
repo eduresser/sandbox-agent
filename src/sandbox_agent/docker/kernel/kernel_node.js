@@ -14,10 +14,28 @@ const Module = require("module");
 
 const SOCKET_PATH = "/tmp/kernel.sock";
 const MAX_OUTPUT = 2 * 1024 * 1024;
+const ASYNC_DRAIN_MS = 150;
 
 process.chdir("/workspace");
 
 if (fs.existsSync(SOCKET_PATH)) fs.unlinkSync(SOCKET_PATH);
+
+// ── Async Error Safety Net ──────────────────────────────
+// User code may schedule callbacks (fs.readdir, setTimeout, etc.) that throw
+// after vm.runInContext returns.  Without these handlers the uncaught error
+// kills the kernel (PID 1) and the whole container dies.
+
+const asyncErrors = [];
+
+process.on("uncaughtException", (err) => {
+  asyncErrors.push({ type: err.constructor.name, message: err.message });
+});
+
+process.on("unhandledRejection", (reason) => {
+  const msg = reason instanceof Error ? reason.message : String(reason);
+  const type = reason instanceof Error ? reason.constructor.name : "UnhandledRejection";
+  asyncErrors.push({ type, message: msg });
+});
 
 // require() that resolves from /workspace so `npm install`-ed packages are found.
 const workspaceRequire = Module.createRequire("/workspace/");
@@ -130,6 +148,11 @@ async function execute(code, timeout = 30) {
       } finally {
         clearTimeout(timer);
       }
+    } else {
+      // Brief drain: let pending I/O callbacks (fs.readdir, etc.) fire
+      // so their console output and potential errors are captured in this
+      // response rather than silently lost or surfaced as async errors.
+      await new Promise((r) => setTimeout(r, ASYNC_DRAIN_MS));
     }
 
     response.stdout = stdoutChunks.join("\n").slice(0, MAX_OUTPUT);
@@ -150,6 +173,24 @@ async function execute(code, timeout = 30) {
       message: err.message,
       traceback: err.stack,
     };
+  }
+
+  // Surface any async errors (uncaughtException / unhandledRejection) that
+  // fired during this execution so the caller gets visibility.
+  if (asyncErrors.length > 0) {
+    const msgs = asyncErrors
+      .splice(0)
+      .map((e) => `[async ${e.type}] ${e.message}`);
+    const prefix = response.stderr ? response.stderr + "\n" : "";
+    response.stderr = (prefix + msgs.join("\n")).slice(0, MAX_OUTPUT);
+    if (response.success) {
+      response.success = false;
+      response.error = {
+        type: "AsyncError",
+        message:
+          "Code spawned async callbacks that threw errors: " + msgs.join("; "),
+      };
+    }
   }
 
   return response;
