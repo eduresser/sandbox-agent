@@ -1,0 +1,9 @@
+FROM node:22-slim
+
+COPY kernel/kernel_node.js /kernel/kernel_node.js
+COPY kernel/client.js /kernel/client.js
+
+RUN mkdir -p /workspace
+WORKDIR /workspace
+
+CMD ["node", "/kernel/kernel_node.js"]

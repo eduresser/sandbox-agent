@@ -1,0 +1,39 @@
+"""Application settings via Pydantic Settings.
+
+Loads from environment variables and ``.env`` file.
+"""
+
+from __future__ import annotations
+
+from functools import lru_cache
+
+from pydantic_settings import BaseSettings, SettingsConfigDict
+
+
+class Settings(BaseSettings):
+    """Sandbox Agent configuration."""
+
+    model_config = SettingsConfigDict(
+        env_file=".env",
+        env_file_encoding="utf-8",
+        extra="ignore",
+    )
+
+    # ── LLM ──
+    OPENAI_API_KEY: str = ""
+    CHAT_MODEL: str = "gpt-4o"
+
+    # ── Container ──
+    CONTAINER_MEMORY_LIMIT: str = "512m"
+    CONTAINER_CPU_QUOTA: int = 50_000
+    EXECUTION_TIMEOUT_SECONDS: int = 30
+    MAX_SESSIONS: int = 5
+
+    # ── Agent ──
+    MAX_ITERATIONS: int = 25
+
+
+@lru_cache(maxsize=1)
+def get_settings() -> Settings:
+    """Return cached application settings."""
+    return Settings()

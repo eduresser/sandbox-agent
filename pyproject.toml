@@ -1,0 +1,41 @@
+[project]
+name = "sandbox-agent"
+version = "1.0.0"
+description = "LangGraph agent with Docker-based sandboxed code execution (Python & Node.js) via persistent kernels."
+readme = "README.md"
+authors = [
+    { name = "Eduardo Ramon Resser", email = "eduresser@gmail.com" }
+]
+requires-python = ">=3.11"
+dependencies = [
+    "langgraph>=0.2.60",
+    "langchain>=0.3.14",
+    "langchain-openai>=0.3.0",
+    "docker>=7.0.0",
+    "pydantic-settings>=2.0.2",
+    "rich>=13.7.0",
+]
+
+[project.scripts]
+sandbox-agent = "sandbox_agent.cli:main"
+
+[dependency-groups]
+dev = [
+    "pytest>=8.0.0",
+    "pytest-cov>=6.0.0",
+    "ruff>=0.8.0",
+]
+
+[build-system]
+requires = ["uv_build>=0.9.25,<0.10.0"]
+build-backend = "uv_build"
+
+[tool.ruff]
+line-length = 100
+target-version = "py311"
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "W"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]

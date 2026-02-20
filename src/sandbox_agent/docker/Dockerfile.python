@@ -1,0 +1,11 @@
+FROM python:3.12-slim
+
+RUN pip install --no-cache-dir ipython
+
+COPY kernel/kernel_python.py /kernel/kernel_python.py
+COPY kernel/client.py /kernel/client.py
+
+RUN mkdir -p /workspace
+WORKDIR /workspace
+
+CMD ["python", "/kernel/kernel_python.py"]
