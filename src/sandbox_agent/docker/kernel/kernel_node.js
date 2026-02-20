@@ -10,6 +10,7 @@ const vm = require("vm");
 const net = require("net");
 const fs = require("fs");
 const { execSync } = require("child_process");
+const { inspect } = require("util");
 const Module = require("module");
 
 const SOCKET_PATH = "/tmp/kernel.sock";
@@ -83,12 +84,15 @@ async function execute(code, timeout = 30) {
   const stdoutChunks = [];
   const stderrChunks = [];
 
+  const fmt = (v) =>
+    typeof v === "string" ? v : inspect(v, { depth: 4, colors: false });
+
   sandbox.console = {
-    log: (...args) => stdoutChunks.push(args.map(String).join(" ")),
-    error: (...args) => stderrChunks.push(args.map(String).join(" ")),
-    warn: (...args) => stderrChunks.push(args.map(String).join(" ")),
-    info: (...args) => stdoutChunks.push(args.map(String).join(" ")),
-    dir: (obj) => stdoutChunks.push(JSON.stringify(obj, null, 2)),
+    log: (...args) => stdoutChunks.push(args.map(fmt).join(" ")),
+    error: (...args) => stderrChunks.push(args.map(fmt).join(" ")),
+    warn: (...args) => stderrChunks.push(args.map(fmt).join(" ")),
+    info: (...args) => stdoutChunks.push(args.map(fmt).join(" ")),
+    dir: (obj) => stdoutChunks.push(inspect(obj, { depth: 4, colors: false })),
     table: (data) => stdoutChunks.push(JSON.stringify(data, null, 2)),
   };
 
