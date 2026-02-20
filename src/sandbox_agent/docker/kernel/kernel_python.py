@@ -18,8 +18,16 @@ import traceback
 SOCKET_PATH = "/tmp/kernel.sock"
 MAX_OUTPUT = 2 * 1024 * 1024
 
-os.makedirs("/workspace", exist_ok=True)
 os.chdir("/workspace")
+
+# Ensure user site-packages is on sys.path so that packages installed
+# at runtime via `pip install` (which land in ~/.local/...) are importable.
+import site  # noqa: E402
+
+user_site = site.getusersitepackages()
+os.makedirs(user_site, exist_ok=True)
+if user_site not in sys.path:
+    sys.path.insert(0, user_site)
 
 if os.path.exists(SOCKET_PATH):
     os.unlink(SOCKET_PATH)

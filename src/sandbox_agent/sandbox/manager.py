@@ -1,6 +1,9 @@
 """
 SandboxManager — orchestrates Docker containers via docker exec.
 No exposed ports. No host volumes mounted.
+Containers are hardened with resource limits, PID limits, read-only
+rootfs, and non-root user to prevent host damage even under fork bombs,
+OOM, or disk-fill attacks.
 """
 
 from __future__ import annotations
@@ -25,20 +28,38 @@ from sandbox_agent.settings import get_settings
 
 logger = logging.getLogger(__name__)
 
+SANDBOX_UID = 65532
+SANDBOX_GID = 65532
+
 RUNTIME_CONFIG: dict[str, dict[str, Any]] = {
     "python": {
         "image": "sandbox-python:latest",
         "dockerfile": "Dockerfile.python",
         "client_cmd": ["python", "/kernel/client.py"],
         "install_cmd": lambda pkgs: ["pip", "install", "--no-cache-dir", *pkgs],
+        "install_user": "root",
     },
     "node": {
         "image": "sandbox-node:latest",
         "dockerfile": "Dockerfile.node",
         "client_cmd": ["node", "/kernel/client.js"],
         "install_cmd": lambda pkgs: ["npm", "install", "--save", *pkgs],
+        "install_user": None,
     },
 }
+
+
+class ContainerDiedError(RuntimeError):
+    """Raised when a sandbox container has exited unexpectedly."""
+
+    def __init__(self, session_id: str, reason: str, exit_code: int | None = None):
+        self.session_id = session_id
+        self.reason = reason
+        self.exit_code = exit_code
+        super().__init__(
+            f"Container for session '{session_id}' died: {reason}"
+            + (f" (exit code {exit_code})" if exit_code is not None else "")
+        )
 
 
 class SandboxManager:
@@ -70,23 +91,91 @@ class SandboxManager:
             )
             logger.info("Image %s built.", config["image"])
 
+    # ── Container Health ───────────────────────────────
+
+    def _inspect_container_health(self, session_id: str) -> str | None:
+        """Check if the container is still running. Returns a human-readable
+        death reason or None if the container is healthy."""
+        container = self._containers.get(session_id)
+        if container is None:
+            return "container not found (already removed)"
+
+        try:
+            container.reload()
+        except docker.errors.NotFound:
+            self._mark_session_dead(session_id)
+            return "container no longer exists (removed externally)"
+        except Exception as exc:
+            return f"unable to inspect container: {exc}"
+
+        status = container.status
+        if status == "running":
+            return None
+
+        state = container.attrs.get("State", {})
+        oom = state.get("OOMKilled", False)
+        exit_code = state.get("ExitCode")
+
+        if oom:
+            reason = "OOM-killed — the code exhausted the container memory limit"
+        elif exit_code == 137:
+            reason = "killed by signal 9 (SIGKILL) — likely OOM or external kill"
+        elif exit_code == 139:
+            reason = "segmentation fault (SIGSEGV)"
+        elif exit_code == 143:
+            reason = "terminated by SIGTERM"
+        else:
+            reason = f"exited with status {exit_code} (container status: {status})"
+
+        self._mark_session_dead(session_id)
+        return reason
+
+    def _mark_session_dead(self, session_id: str) -> None:
+        if session_id in self.sessions:
+            self.sessions[session_id].status = "dead"
+
+    def _assert_container_alive(self, session_id: str) -> None:
+        """Raise ContainerDiedError if the container is not running."""
+        reason = self._inspect_container_health(session_id)
+        if reason is not None:
+            state = self._containers.get(session_id)
+            exit_code = None
+            if state is not None:
+                try:
+                    exit_code = state.attrs.get("State", {}).get("ExitCode")
+                except Exception:
+                    pass
+            raise ContainerDiedError(session_id, reason, exit_code)
+
     # ── Kernel Communication ───────────────────────────
 
     def _send_to_kernel(self, session_id: str, payload: dict, timeout: int = 35) -> dict:
+        self._assert_container_alive(session_id)
+
         info = self.sessions[session_id]
         config = RUNTIME_CONFIG[info.runtime]
         container_name = info.container_name
 
-        result = subprocess.run(
-            ["docker", "exec", "-i", container_name, *config["client_cmd"]],
-            input=json.dumps(payload, ensure_ascii=False),
-            capture_output=True,
-            text=True,
-            timeout=timeout,
-        )
+        try:
+            result = subprocess.run(
+                ["docker", "exec", "-i", container_name, *config["client_cmd"]],
+                input=json.dumps(payload, ensure_ascii=False),
+                capture_output=True,
+                text=True,
+                timeout=timeout,
+            )
+        except subprocess.TimeoutExpired:
+            raise TimeoutError(
+                f"Execution in session '{session_id}' timed out after {timeout}s"
+            )
 
         if result.returncode != 0:
-            raise RuntimeError(f"docker exec failed (rc={result.returncode}): {result.stderr}")
+            health = self._inspect_container_health(session_id)
+            if health is not None:
+                raise ContainerDiedError(session_id, health)
+            raise RuntimeError(
+                f"docker exec failed (rc={result.returncode}): {result.stderr[:500]}"
+            )
 
         return json.loads(result.stdout)
 
@@ -98,6 +187,8 @@ class SandboxManager:
                 resp = self._send_to_kernel(session_id, {"action": "ping"}, timeout=5)
                 if resp.get("success"):
                     return
+            except ContainerDiedError:
+                raise
             except Exception as e:
                 last_err = e
             time.sleep(0.5)
@@ -129,14 +220,26 @@ class SandboxManager:
         session_id = uuid.uuid4().hex[:8]
         container_name = f"sandbox-{session_id}"
 
+        tmpfs_size = settings.CONTAINER_TMPFS_SIZE
+
+        effective_mem = mem_limit or settings.CONTAINER_MEMORY_LIMIT
+
         container = self.client.containers.run(
             RUNTIME_CONFIG[runtime]["image"],
             name=container_name,
             detach=True,
-            mem_limit=mem_limit or settings.CONTAINER_MEMORY_LIMIT,
+            mem_limit=effective_mem,
+            memswap_limit=effective_mem,
             cpu_period=100_000,
             cpu_quota=cpu_quota or settings.CONTAINER_CPU_QUOTA,
+            pids_limit=settings.CONTAINER_PIDS_LIMIT,
             network_disabled=not network,
+            tmpfs={
+                "/tmp": f"size={tmpfs_size},nosuid,uid={SANDBOX_UID},gid={SANDBOX_GID}",
+                "/workspace": f"size={tmpfs_size},uid={SANDBOX_UID},gid={SANDBOX_GID}",
+                "/home/sandbox": f"size={tmpfs_size},uid={SANDBOX_UID},gid={SANDBOX_GID}",
+            },
+            security_opt=["no-new-privileges"],
             labels={"sandbox-agent": "true", "session-id": session_id},
         )
 
@@ -176,6 +279,7 @@ class SandboxManager:
 
     def execute_terminal(self, session_id: str, command: str) -> TerminalResult:
         self._check_session(session_id)
+        self._assert_container_alive(session_id)
         container = self._containers[session_id]
 
         exit_code, output = container.exec_run(
@@ -190,7 +294,8 @@ class SandboxManager:
         return TerminalResult(exit_code=exit_code, stdout=stdout, stderr=stderr)
 
     def _install_initial_packages(self, session_id: str, packages: dict[str, str]) -> None:
-        """Install packages during session creation. Internal only."""
+        """Install packages during session creation. Runs as root so packages
+        land in the system site-packages / global node_modules."""
         info = self.sessions[session_id]
         config = RUNTIME_CONFIG[info.runtime]
         container = self._containers[session_id]
@@ -200,9 +305,11 @@ class SandboxManager:
         else:
             specs = [f"{n}@{v}" if v else n for n, v in packages.items()]
 
+        user = config.get("install_user")
         exit_code, output = container.exec_run(
             config["install_cmd"](specs),
             demux=True,
+            **({"user": user} if user else {}),
         )
 
         if exit_code != 0:
@@ -216,7 +323,8 @@ class SandboxManager:
         remote_name: str | None = None,
     ) -> dict:
         self._check_session(session_id)
-        container = self._containers[session_id]
+        self._assert_container_alive(session_id)
+        info = self.sessions[session_id]
         local_path = Path(local_path)
 
         if not local_path.exists():
@@ -230,7 +338,17 @@ class SandboxManager:
             tar.add(str(local_path), arcname=remote_name)
         tar_buf.seek(0)
 
-        container.put_archive("/workspace", tar_buf)
+        result = subprocess.run(
+            ["docker", "exec", "-i", info.container_name, "tar", "xf", "-", "-C", "/workspace"],
+            input=tar_buf.read(),
+            capture_output=True,
+            timeout=60,
+        )
+
+        if result.returncode != 0:
+            raise RuntimeError(
+                f"Failed to upload file: {result.stderr.decode(errors='replace')[:500]}"
+            )
 
         return {
             "success": True,

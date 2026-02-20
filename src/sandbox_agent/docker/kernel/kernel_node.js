@@ -10,19 +10,22 @@ const vm = require("vm");
 const net = require("net");
 const fs = require("fs");
 const { execSync } = require("child_process");
+const Module = require("module");
 
 const SOCKET_PATH = "/tmp/kernel.sock";
 const MAX_OUTPUT = 2 * 1024 * 1024;
 
-fs.mkdirSync("/workspace", { recursive: true });
 process.chdir("/workspace");
 
 if (fs.existsSync(SOCKET_PATH)) fs.unlinkSync(SOCKET_PATH);
 
+// require() that resolves from /workspace so `npm install`-ed packages are found.
+const workspaceRequire = Module.createRequire("/workspace/");
+
 // ── Persistent Context (equivalent to IPython shell) ──
 
 const sandbox = {
-  require,
+  require: workspaceRequire,
   console: undefined,
   process: {
     env: { ...process.env },

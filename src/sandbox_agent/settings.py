@@ -26,6 +26,8 @@ class Settings(BaseSettings):
     # ── Container ──
     CONTAINER_MEMORY_LIMIT: str = "512m"
     CONTAINER_CPU_QUOTA: int = 50_000
+    CONTAINER_PIDS_LIMIT: int = 128
+    CONTAINER_TMPFS_SIZE: str = "200m"
     EXECUTION_TIMEOUT_SECONDS: int = 30
     MAX_SESSIONS: int = 5
 
