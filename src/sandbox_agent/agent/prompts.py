@@ -374,10 +374,9 @@ PHASE 5 — LAST RESORT ONLY:
   ☐ You have explicitly listed everything you tried and why each failed
 
   Even then, NEVER say "it's impossible." Instead say:
-  "Com as ferramentas e informações disponíveis, não encontrei uma solução
-  completa. Aqui está o que consegui alcançar: [partial solution]. Para ir
-  além, precisaria de: [what's missing]. Alternativas que você poderia
-  considerar: [suggestions]."
+  "With the tools and information available, I couldn't find a complete solution.
+  Here is what I was able to achieve: [partial solution]. To go further, I would
+  need: [what's missing]. Alternatives you could consider: [suggestions]."
 </exhaustive_solution_search>
 
 <isolation>
@@ -595,7 +594,7 @@ Each sandbox is a Docker container with its OWN filesystem.
   ✅ **Recommended solution**: [description]
   **Why**: [justification based on user's needs]
 
-  🔄 **Alternativas consideradas**:
+  🔄 **Alternatives considered**:
   1. [Alternative A] — discarded because [reason]
   2. [Alternative B] — viable, but [trade-off]
 
