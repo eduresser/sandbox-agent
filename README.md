@@ -18,7 +18,7 @@ LangGraph agent with Docker-based sandboxed code execution. Each session is an i
 
 - Python 3.11+
 - Docker Engine
-- OpenAI API key
+- API key for your LLM provider (`CHAT_MODEL_API_KEY`)
 
 ## Setup
 
@@ -31,7 +31,7 @@ uv sync
 
 # Configure environment
 cp .env.example .env
-# Edit .env with your OPENAI_API_KEY
+# Edit .env with your CHAT_MODEL_API_KEY and LLM settings
 
 # Docker images are built automatically on first use
 ```
@@ -121,6 +121,13 @@ When a container crashes, the agent receives a clear `CONTAINER_DIED` error with
 All settings can be overridden via environment variables or `.env`:
 
 ```bash
+# LLM (provider-agnostic)
+CHAT_MODEL=gpt-4o
+CHAT_MODEL_PROVIDER=openai
+CHAT_MODEL_BASE_URL=
+CHAT_MODEL_API_KEY=sk-...
+
+# Container
 CONTAINER_MEMORY_LIMIT=512m
 CONTAINER_CPU_QUOTA=50000
 CONTAINER_PIDS_LIMIT=128

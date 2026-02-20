@@ -99,10 +99,10 @@ def main() -> None:
     console = Console()
     settings = get_settings()
 
-    if not settings.OPENAI_API_KEY:
+    if not settings.CHAT_MODEL_API_KEY:
         console.print(
             Panel(
-                "[bold red]OPENAI_API_KEY not configured.[/bold red]\n\n"
+                "[bold red]CHAT_MODEL_API_KEY not configured.[/bold red]\n\n"
                 "Configure via environment variable or .env file.\n"
                 "See .env.example for reference.",
                 title="Configuration Error",

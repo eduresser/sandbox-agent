@@ -9,6 +9,8 @@ from functools import lru_cache
 
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
+from typing import Optional
+
 
 class Settings(BaseSettings):
     """Sandbox Agent configuration."""
@@ -19,9 +21,11 @@ class Settings(BaseSettings):
         extra="ignore",
     )
 
-    # ── LLM ──
-    OPENAI_API_KEY: str = ""
+    # ── LLM (provider-agnostic) ──
     CHAT_MODEL: str = "gpt-4o"
+    CHAT_MODEL_PROVIDER: str = "openai"
+    CHAT_MODEL_BASE_URL: Optional[str] = None
+    CHAT_MODEL_API_KEY: Optional[str] = None
 
     # ── Container ──
     CONTAINER_MEMORY_LIMIT: str = "512m"

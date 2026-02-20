@@ -33,7 +33,7 @@ def _docker_available() -> bool:
 
 pytestmark = [
     pytest.mark.skipif(not _docker_available(), reason="Docker is not available"),
-    pytest.mark.skipif(not os.environ.get("OPENAI_API_KEY", ""), reason="OPENAI_API_KEY not set"),
+    pytest.mark.skipif(not os.environ.get("CHAT_MODEL_API_KEY", ""), reason="CHAT_MODEL_API_KEY not set"),
 ]
 
 SEPARATOR = "─" * 80

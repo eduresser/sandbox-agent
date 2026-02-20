@@ -14,10 +14,15 @@ from sandbox_agent.settings import get_settings
 def get_chat_model() -> BaseChatModel:
     """Return a cached instance of the configured chat model."""
     settings = get_settings()
-    return init_chat_model(
-        settings.CHAT_MODEL,
-        api_key=settings.OPENAI_API_KEY,
-    )
+    kwargs: dict = {
+        "model": settings.CHAT_MODEL,
+        "model_provider": settings.CHAT_MODEL_PROVIDER,
+    }
+    if settings.CHAT_MODEL_BASE_URL:
+        kwargs["base_url"] = settings.CHAT_MODEL_BASE_URL
+    if settings.CHAT_MODEL_API_KEY:
+        kwargs["api_key"] = settings.CHAT_MODEL_API_KEY
+    return init_chat_model(**kwargs)
 
 
 def reset_clients_cache() -> None:
