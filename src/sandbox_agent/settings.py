@@ -21,7 +21,7 @@ class Settings(BaseSettings):
     # ── LLM (provider-agnostic) ──
     CHAT_MODEL: str = "gpt-4o"
     CHAT_MODEL_PROVIDER: str = "openai"
-    CHAT_MODEL_BASE_URL: [str, None] = None
+    CHAT_MODEL_BASE_URL: str | None = None
     CHAT_MODEL_API_KEY: str
 
     # ── Container ──

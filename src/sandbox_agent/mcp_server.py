@@ -9,11 +9,8 @@ from __future__ import annotations
 import base64
 import tempfile
 import traceback
-import warnings
 from pathlib import Path
 from typing import Any
-
-warnings.filterwarnings("ignore", message=".*is not a Python type.*", module="pydantic")
 
 from mcp.server.fastmcp import FastMCP
 
