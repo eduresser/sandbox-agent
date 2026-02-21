@@ -1,7 +1,5 @@
 FROM python:3.12-slim
 
-# System libraries commonly needed by Python packages at runtime
-# (psycopg2, lxml, Pillow, cryptography, etc.).
 RUN apt-get update \
     && apt-get install -y --no-install-recommends \
         libpq5 \

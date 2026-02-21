@@ -1,8 +1,3 @@
-"""
-Ephemeral client: reads JSON from stdin, sends to kernel via UNIX socket,
-prints response to stdout and exits. Stateless.
-"""
-
 import socket
 import sys
 

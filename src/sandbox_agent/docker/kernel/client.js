@@ -1,7 +1,3 @@
-/**
- * Ephemeral client: reads stdin, sends to kernel, prints response, exits.
- */
-
 const net = require("net");
 
 const chunks = [];
