@@ -15,6 +15,8 @@ from typing import Any
 from mcp.server.fastmcp import FastMCP
 
 from sandbox_agent.sandbox.manager import ContainerDiedError, SandboxManager
+from sandbox_agent.sandbox.models import truncate_field
+from sandbox_agent.settings import get_settings
 
 mcp = FastMCP(
     "sandbox-agent",
@@ -71,7 +73,8 @@ def _error_payload(manager: SandboxManager, exc: Exception) -> dict[str, Any]:
         payload["hint"] = "No active sessions. Call create_session first."
 
     if "not found" not in str(exc).lower():
-        payload["traceback"] = traceback.format_exc()
+        raw_tb = traceback.format_exc()
+        payload["traceback"] = truncate_field(raw_tb, get_settings().MAX_TRACEBACK_CHARS)
 
     return payload
 

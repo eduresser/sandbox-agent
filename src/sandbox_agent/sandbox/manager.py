@@ -22,7 +22,7 @@ from typing import Any
 import docker
 import docker.errors
 
-from sandbox_agent.sandbox.models import ExecutionResult, SessionInfo, TerminalResult
+from sandbox_agent.sandbox.models import ExecutionResult, SessionInfo, TerminalResult, truncate_field
 from sandbox_agent.settings import get_settings
 
 SANDBOX_UID = 65532
@@ -282,6 +282,17 @@ class SandboxManager:
             {"action": "execute", "code": code, "timeout": timeout},
             timeout=timeout + 10,
         )
+
+        if "stdout" in resp:
+            resp["stdout"] = truncate_field(resp["stdout"], settings.MAX_STDOUT_CHARS)
+        if "stderr" in resp:
+            resp["stderr"] = truncate_field(resp["stderr"], settings.MAX_STDERR_CHARS)
+        if "result" in resp and isinstance(resp["result"], dict):
+            for key in list(resp["result"]):
+                val = resp["result"][key]
+                if isinstance(val, str):
+                    resp["result"][key] = truncate_field(val, settings.MAX_RESULT_CHARS)
+
         return ExecutionResult(**resp)
 
     def execute_terminal(self, session_id: str, command: str) -> TerminalResult:
@@ -300,7 +311,11 @@ class SandboxManager:
         stdout = (output[0] or b"").decode(errors="replace")
         stderr = (output[1] or b"").decode(errors="replace")
 
-        return TerminalResult(exit_code=exit_code, stdout=stdout, stderr=stderr)
+        return TerminalResult(
+            exit_code=exit_code,
+            stdout=truncate_field(stdout, settings.MAX_STDOUT_CHARS),
+            stderr=truncate_field(stderr, settings.MAX_STDERR_CHARS),
+        )
 
     def _install_initial_packages(self, session_id: str, packages: dict[str, str]) -> None:
         """Install packages during session creation. Runs as root so packages
@@ -324,7 +339,8 @@ class SandboxManager:
             **({"user": user} if user else {}),
         )
 
-        info.stderr = (output[1] or b"").decode(errors="replace")
+        raw_stderr = (output[1] or b"").decode(errors="replace")
+        info.stderr = truncate_field(raw_stderr, get_settings().MAX_STDERR_CHARS)
 
     def upload_file(
         self,

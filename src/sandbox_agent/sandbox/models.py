@@ -4,6 +4,17 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 
+TRUNCATION_NOTICE = "\n\n... [truncated — {original} chars total, showing first {limit}]"
+
+
+def truncate_field(value: str, max_chars: int) -> str:
+    """Truncate *value* to *max_chars*, appending a notice if trimmed."""
+    if not value or max_chars <= 0 or len(value) <= max_chars:
+        return value
+    return value[:max_chars] + TRUNCATION_NOTICE.format(
+        original=len(value), limit=max_chars,
+    )
+
 
 @dataclass
 class SessionInfo:

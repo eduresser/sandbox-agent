@@ -31,11 +31,17 @@ class Settings(BaseSettings):
     CONTAINER_TMPFS_SIZE: str = "200m"
     EXECUTION_TIMEOUT_SECONDS: int = 30
     MAX_SESSIONS: int = 5
-    TERMINAL_ROOT: bool = True
+    TERMINAL_ROOT: bool = False
 
     # ── Vision ──
     # None = auto-detect via try-with-fallback; True/False = explicit override
     CHAT_MODEL_SUPPORTS_VISION: bool | None = None
+
+    # ── Output Limits (characters) ──
+    MAX_STDOUT_CHARS: int = 20_000
+    MAX_STDERR_CHARS: int = 10_000
+    MAX_RESULT_CHARS: int = 20_000
+    MAX_TRACEBACK_CHARS: int = 5_000
 
     # ── Agent ──
     MAX_ITERATIONS: int = 25
