@@ -2,8 +2,6 @@
  * Ephemeral TCP client for the R kernel.
  * Reads JSON from stdin, sends to the kernel on 127.0.0.1:8765,
  * writes the response to stdout and exits.
- *
- * Replaces client_r.py so Python is no longer needed in the R image.
  */
 
 #include <stdio.h>
