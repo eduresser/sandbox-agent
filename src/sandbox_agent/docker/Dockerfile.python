@@ -1,5 +1,18 @@
 FROM python:3.12-slim
 
+# System libraries commonly needed by Python packages at runtime
+# (psycopg2, lxml, Pillow, cryptography, etc.).
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends \
+        libpq5 \
+        libxml2 \
+        libxslt1.1 \
+        libjpeg62-turbo \
+        libpng16-16 \
+        libwebp7 \
+        libffi8 \
+    && rm -rf /var/lib/apt/lists/*
+
 RUN pip install --no-cache-dir ipython \
     && groupadd -g 65532 sandbox \
     && useradd -u 65532 -g 65532 -d /home/sandbox -m sandbox \

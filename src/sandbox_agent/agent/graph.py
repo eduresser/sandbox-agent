@@ -137,13 +137,17 @@ def build_agent(
             for m in messages
         )
 
+        if has_images and vision_state["supported"] is False:
+            messages = _strip_images_from_messages(messages)
+            has_images = False
+
         try:
             response = llm_with_tools.invoke(messages)
         except Exception as exc:
-            if has_images and vision_state["supported"] is None:
+            if has_images:
                 logger.info(
-                    "Vision probe failed (%s: %s), retrying without images.",
-                    type(exc).__name__, exc,
+                    "LLM call failed with images (%s), retrying without.",
+                    type(exc).__name__,
                 )
                 vision_state["supported"] = False
                 messages = _strip_images_from_messages(messages)

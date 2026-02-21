@@ -46,7 +46,7 @@ RUNTIME_CONFIG: dict[str, dict[str, Any]] = {
     "r": {
         "image": "sandbox-r:latest",
         "dockerfile": "Dockerfile.r",
-        "client_cmd": ["python3", "/kernel/client_r.py"],
+        "client_cmd": ["/kernel/client_r"],
         "install_cmd": lambda pkgs: [
             "Rscript", "-e",
             "install.packages(c("
@@ -288,11 +288,13 @@ class SandboxManager:
         self._check_session(session_id)
         self._assert_container_alive(session_id)
         container = self._containers[session_id]
+        settings = get_settings()
 
         exit_code, output = container.exec_run(
             ["sh", "-c", command],
             demux=True,
             workdir="/workspace",
+            user="root" if settings.TERMINAL_ROOT else None,
         )
 
         stdout = (output[0] or b"").decode(errors="replace")

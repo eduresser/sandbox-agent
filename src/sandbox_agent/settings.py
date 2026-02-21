@@ -31,6 +31,7 @@ class Settings(BaseSettings):
     CONTAINER_TMPFS_SIZE: str = "200m"
     EXECUTION_TIMEOUT_SECONDS: int = 30
     MAX_SESSIONS: int = 5
+    TERMINAL_ROOT: bool = True
 
     # ── Vision ──
     # None = auto-detect via try-with-fallback; True/False = explicit override

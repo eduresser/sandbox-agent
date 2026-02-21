@@ -1,35 +1,35 @@
-FROM r-base:latest
+FROM rocker/r-ver:4
 
 # Prevent OpenBLAS from spawning dozens of threads inside a PID-limited
 # container. Without this, any R process that loads a .so triggers
 # "pthread_create failed" and "failed to map segment from shared object".
 ENV OPENBLAS_NUM_THREADS=1
 
-# Posit Package Manager serves pre-compiled binaries for Linux, making
-# install.packages() ~5-10x faster than compiling from CRAN source.
-ENV PPM_REPO=https://packagemanager.posit.co/cran/__linux__/bookworm/latest
+# rocker/r-ver:4 already configures PPM for the correct Ubuntu release
+# (Noble), so install.packages() gets fast pre-compiled binaries that
+# match the system libraries.
 
-# Global R profile so ALL R processes (kernel, install_cmd, user terminal)
-# use PPM binaries automatically.
-RUN printf '\
-options(repos = c(CRAN = Sys.getenv("PPM_REPO",\n\
-  "https://packagemanager.posit.co/cran/__linux__/bookworm/latest")))\n\
-options(HTTPUserAgent = sprintf(\n\
-  "R/%%s R (%%s)", getRversion(),\n\
-  paste(getRversion(), R.version["platform"], R.version["arch"], R.version["os"])))\n\
-' > /etc/R/Rprofile.site
+COPY kernel/client.r.c /tmp/client.r.c
 
+# Compile the C client and install base R packages, then strip build
+# tools to keep the image lean. Additional system libraries can be
+# installed at runtime via execute_terminal when TERMINAL_ROOT=true.
 RUN apt-get update \
-    && apt-get install -y --no-install-recommends python3 \
-    && rm -rf /var/lib/apt/lists/* \
+    && apt-get install -y --no-install-recommends gcc libc6-dev \
+    && mkdir -p /kernel \
+    && gcc -O2 -static -o /kernel/client_r /tmp/client.r.c \
+    && rm /tmp/client.r.c \
     && Rscript -e "install.packages(c('jsonlite', 'base64enc'), Ncpus=4)" \
-    && groupadd -g 65532 sandbox \
+    && apt-mark manual make libgomp1 \
+    && apt-get purge -y --auto-remove gcc libc6-dev \
+    && rm -rf /var/lib/apt/lists/*
+
+RUN groupadd -g 65532 sandbox \
     && useradd -u 65532 -g 65532 -d /home/sandbox -m sandbox \
     && mkdir -p /workspace /usr/local/lib/R/user-library \
     && chown sandbox:sandbox /workspace /usr/local/lib/R/user-library
 
 COPY kernel/kernel_r.R /kernel/kernel_r.R
-COPY kernel/client_r.py /kernel/client_r.py
 
 # R packages live on the rootfs (not tmpfs) so shared objects can be loaded.
 # Docker mounts /home/sandbox as tmpfs with noexec, which breaks dyn.load().

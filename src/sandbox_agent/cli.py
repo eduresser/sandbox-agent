@@ -26,6 +26,8 @@ _MAX_TOOL_OUTPUT_LINES = 60
 _RUNTIME_LEXER: dict[str, str] = {
     "python": "python",
     "node": "javascript",
+    "r": "r",
+    "julia": "julia",
 }
 
 
