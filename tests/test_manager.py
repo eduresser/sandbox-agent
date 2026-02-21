@@ -152,6 +152,64 @@ class TestUploadFiles:
         assert Path(local_path).name in ls_result.stdout
 
 
+class TestRRuntime:
+    """Tests for the R runtime — mirrors the Python test suite."""
+
+    def test_create_r_session(self, manager: SandboxManager):
+        info = manager.create_session(runtime="r")
+        try:
+            assert info.session_id in manager.sessions
+            assert info.runtime == "r"
+            assert info.status == "running"
+        finally:
+            manager.stop_session(info.session_id)
+
+    def test_simple_expression(self, manager: SandboxManager, r_session: str):
+        result = manager.execute_code(r_session, "1 + 1")
+        assert isinstance(result, ExecutionResult)
+        assert result.success is True
+        assert result.result is not None
+        assert "2" in result.result["text/plain"]
+
+    def test_stdout_capture(self, manager: SandboxManager, r_session: str):
+        result = manager.execute_code(r_session, 'cat("hello world")')
+        assert result.success is True
+        assert "hello world" in result.stdout
+
+    def test_persistent_state(self, manager: SandboxManager, r_session: str):
+        manager.execute_code(r_session, "x <- 42")
+        result = manager.execute_code(r_session, "x * 2")
+        assert result.success is True
+        assert "84" in result.result["text/plain"]
+
+    def test_error_handling(self, manager: SandboxManager, r_session: str):
+        result = manager.execute_code(r_session, 'stop("test error")')
+        assert result.success is False
+        assert result.error is not None
+        assert "simpleError" in result.error["type"] or "error" in result.error["type"].lower()
+
+    def test_timeout(self, manager: SandboxManager, r_session: str):
+        result = manager.execute_code(r_session, "repeat { x <- 1 }", timeout=2)
+        assert result.success is False
+
+    def test_terminal_ls(self, manager: SandboxManager, r_session: str):
+        result = manager.execute_terminal(r_session, "ls /workspace")
+        assert isinstance(result, TerminalResult)
+        assert result.exit_code == 0
+
+    def test_install_packages(self, manager: SandboxManager):
+        info = manager.create_session(runtime="r", dependencies={"crayon": ""})
+        try:
+            result = manager.execute_code(
+                info.session_id,
+                'library(crayon); cat(green("ok"))',
+            )
+            assert result.success is True
+            assert "ok" in result.stdout
+        finally:
+            manager.stop_session(info.session_id)
+
+
 class TestStopSession:
     def test_stop_removes_session(self, manager: SandboxManager):
         info = manager.create_session(runtime="python")

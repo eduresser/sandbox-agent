@@ -43,6 +43,18 @@ RUNTIME_CONFIG: dict[str, dict[str, Any]] = {
         "install_cmd": lambda pkgs: ["npm", "install", "--save", *pkgs],
         "install_user": None,
     },
+    "r": {
+        "image": "sandbox-r:latest",
+        "dockerfile": "Dockerfile.r",
+        "client_cmd": ["python3", "/kernel/client_r.py"],
+        "install_cmd": lambda pkgs: [
+            "Rscript", "-e",
+            "install.packages(c("
+            + ",".join(f"'{p}'" for p in pkgs)
+            + "), Ncpus=2L)",
+        ],
+        "install_user": "root",
+    },
 }
 
 
@@ -298,6 +310,8 @@ class SandboxManager:
 
         if info.runtime == "python":
             specs = [f"{n}=={v}" if v else n for n, v in packages.items()]
+        elif info.runtime == "r":
+            specs = list(packages.keys())
         else:
             specs = [f"{n}@{v}" if v else n for n, v in packages.items()]
 

@@ -21,10 +21,11 @@ def create_create_session_tool(manager: SandboxManager):
         For data analysis, always include pandas and numpy.
 
         Args:
-            language: Sandbox language/runtime. Use "python" or "node".
+            language: Sandbox language/runtime. Use "python", "node", or "r".
             dependencies: Packages to pre-install. Keys are package names,
                 values are versions (use "" for latest).
-                Example: {"pandas": "", "numpy": "", "matplotlib": "3.9.0"}.
+                Example: {"pandas": "", "numpy": "", "matplotlib": "3.9.0"}
+                (R example: {"ggplot2": "", "dplyr": ""}).
 
         Returns:
             JSON with session_id and session info.

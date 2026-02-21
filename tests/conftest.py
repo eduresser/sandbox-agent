@@ -24,3 +24,11 @@ def python_session(manager: SandboxManager):
     info = manager.create_session(runtime="python")
     yield info.session_id
     manager.stop_session(info.session_id)
+
+
+@pytest.fixture()
+def r_session(manager: SandboxManager):
+    """Creates an R sandbox session and cleans it up after the test."""
+    info = manager.create_session(runtime="r")
+    yield info.session_id
+    manager.stop_session(info.session_id)

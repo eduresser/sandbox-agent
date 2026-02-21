@@ -18,7 +18,7 @@ def create_execute_code_tool(manager: SandboxManager):
 
         Args:
             session_id: ID returned by create_session.
-            code: Code to execute (Python or Node.js, depending on the session runtime).
+            code: Code to execute (Python, Node.js, or R, depending on the session runtime).
             timeout: Max execution time in seconds (max 300). Defaults to 30.
 
         Returns:
