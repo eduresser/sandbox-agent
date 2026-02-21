@@ -32,6 +32,10 @@ class Settings(BaseSettings):
     EXECUTION_TIMEOUT_SECONDS: int = 30
     MAX_SESSIONS: int = 5
 
+    # ── Vision ──
+    # None = auto-detect via try-with-fallback; True/False = explicit override
+    CHAT_MODEL_SUPPORTS_VISION: bool | None = None
+
     # ── Agent ──
     MAX_ITERATIONS: int = 25
 

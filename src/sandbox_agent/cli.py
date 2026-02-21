@@ -55,15 +55,27 @@ def _format_tool_input(tool_call: dict[str, Any], manager: SandboxManager | None
     )
 
 
+def _extract_text_content(content: Any) -> str:
+    """Extract displayable text from a ToolMessage content (string or multimodal list)."""
+    if isinstance(content, str):
+        return content
+    if isinstance(content, list):
+        for block in content:
+            if isinstance(block, dict) and block.get("type") == "text":
+                return block["text"]
+    return str(content)
+
+
 def _format_tool_output(msg: ToolMessage) -> Panel:
     name = msg.name or "?"
-    content = msg.content
+    raw_content = msg.content
+    text_content = _extract_text_content(raw_content)
 
     try:
-        parsed = json.loads(content) if isinstance(content, str) else content
+        parsed = json.loads(text_content) if isinstance(text_content, str) else text_content
         formatted = json.dumps(parsed, indent=2, ensure_ascii=False, default=str)
     except (json.JSONDecodeError, TypeError):
-        formatted = str(content)
+        formatted = str(text_content)
 
     lines = formatted.splitlines()
     if len(lines) > _MAX_TOOL_OUTPUT_LINES:
@@ -74,13 +86,15 @@ def _format_tool_output(msg: ToolMessage) -> Panel:
 
     is_error = False
     try:
-        parsed_check = json.loads(content) if isinstance(content, str) else content
+        parsed_check = (
+            json.loads(text_content) if isinstance(text_content, str) else text_content
+        )
         if isinstance(parsed_check, dict) and parsed_check.get("success") is False:
             is_error = True
     except (json.JSONDecodeError, TypeError):
         pass
 
-    if not is_error and isinstance(content, str) and "Error invoking tool" in content:
+    if not is_error and isinstance(text_content, str) and "Error invoking tool" in text_content:
         is_error = True
 
     border = "red" if is_error else "green"
