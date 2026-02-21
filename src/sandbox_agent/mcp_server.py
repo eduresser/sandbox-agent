@@ -114,8 +114,6 @@ def create_session(
         "status": info.status,
         "dependencies": info.dependencies,
     }
-    if info.stdout:
-        result["stdout"] = info.stdout
     if info.stderr:
         result["stderr"] = info.stderr
     return result

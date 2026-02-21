@@ -322,7 +322,6 @@ class SandboxManager:
             **({"user": user} if user else {}),
         )
 
-        info.stdout = (output[0] or b"").decode(errors="replace")
         info.stderr = (output[1] or b"").decode(errors="replace")
 
     def upload_file(

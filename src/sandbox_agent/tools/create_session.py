@@ -44,8 +44,6 @@ def create_create_session_tool(manager: SandboxManager):
             "status": info.status,
             "dependencies": info.dependencies,
         }
-        if info.stdout:
-            result["stdout"] = info.stdout
         if info.stderr:
             result["stderr"] = info.stderr
 
