@@ -28,7 +28,7 @@ frontend = [
 [project.scripts]
 sandbox-agent = "sandbox_agent.cli:main"
 sandbox-agent-mcp = "sandbox_agent.mcp_server:main"
-sandbox-agent-frontend = "sandbox_agent.frontend_runner:main"
+sandbox-agent-frontend = "sandbox_agent.cli:run_frontend_entry"
 
 [dependency-groups]
 dev = [

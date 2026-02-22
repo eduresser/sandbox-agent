@@ -45,9 +45,20 @@ cp .env.example .env
 
 ## Usage
 
+All commands use the unified `sandbox-agent` entry point:
+
+```bash
+uv run sandbox-agent cli       # CLI interativo (default)
+uv run sandbox-agent mcp       # MCP server
+uv run sandbox-agent api       # REST API (Aegra)
+uv run sandbox-agent ui        # UI Streamlit (inicia API automaticamente se necessário)
+```
+
 ### CLI
 
 ```bash
+uv run sandbox-agent cli
+# ou simplesmente
 uv run sandbox-agent
 ```
 
@@ -58,7 +69,7 @@ The interactive CLI uses [Rich](https://github.com/Textualize/rich) for syntax-h
 Run the MCP server (stdio transport) for integration with Cursor, Claude Desktop, or any MCP-compatible client:
 
 ```bash
-uv run sandbox-agent-mcp
+uv run sandbox-agent mcp
 ```
 
 #### Claude Desktop or Cursor
@@ -70,11 +81,13 @@ Add the following MCP config:
   "mcpServers": {
     "sandbox-agent": {
       "command": "uv",
-      "args": ["--directory", "/path/to/sandbox-agent", "run", "sandbox-agent-mcp"]
+      "args": ["--directory", "/path/to/sandbox-agent", "run", "sandbox-agent", "mcp"]
     }
   }
 }
 ```
+
+(Alternative: `sandbox-agent-mcp` still works for backward compatibility.)
 
 The MCP server exposes the same 6 tools as the CLI agent. The `import_files` tool accepts file content directly (as text or base64 via `file_content`/`encoding` keys) or host paths (via `source`/`destination` keys), since MCP clients don't always share a filesystem with the server. The `export_files` tool accepts an optional `output_dir` override.
 
@@ -84,7 +97,7 @@ Run the agent as a REST API via [Aegra](https://aegra.dev/) (self-hosted LangGra
 
 ```bash
 # Add to .env: DATABASE_URL=postgresql://sandbox_agent:sandbox_agent_secret@localhost:5432/sandbox_agent
-uv run aegra dev
+uv run sandbox-agent api
 ```
 
 The server runs at `http://localhost:8000` with OpenAPI docs at `/docs`. Use the LangGraph SDK or curl to create assistants, threads, and stream runs. Compatible with Agent Chat UI, LangGraph Studio, and CopilotKit.
@@ -97,11 +110,11 @@ A web UI for chatting with the agent via the Aegra API:
 # Install frontend dependencies (streamlit, httpx)
 uv sync --extra frontend
 
-# Start the frontend (requires Aegra running: uv run aegra dev)
-uv run sandbox-agent-frontend
+# Start the UI (starts API automatically if not running)
+uv run sandbox-agent ui
 ```
 
-The frontend runs at `http://localhost:8501`.
+The frontend runs at `http://localhost:8501`. If the API is not running, it will be started in the background automatically.
 
 ### Programmatic
 

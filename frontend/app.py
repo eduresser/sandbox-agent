@@ -358,7 +358,7 @@ st.title("\U0001f4bb Sandbox Agent")
 if not st.session_state.api_healthy:
     st.warning(
         "A API Aegra nao esta acessivel em `http://127.0.0.1:8000`. "
-        "Inicie o servidor com `uv run aegra dev` antes de usar o chat."
+        "Inicie a API com `uv run sandbox-agent api` ou use `uv run sandbox-agent ui` (inicia a API automaticamente)."
     )
 
 # Auto-create thread if none exists

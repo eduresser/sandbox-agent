@@ -1,10 +1,21 @@
-"""Interactive CLI for the Sandbox Agent."""
+"""Interactive CLI for the Sandbox Agent.
+
+Unified entry point with subcommands:
+  sandbox-agent cli      — interactive CLI
+  sandbox-agent mcp      — MCP server
+  sandbox-agent api     — REST API (Aegra)
+  sandbox-agent ui      — Streamlit UI (starts API if not running)
+"""
 
 from __future__ import annotations
 
 import json
 import logging
+import subprocess
 import sys
+import time
+import urllib.request
+from pathlib import Path
 from typing import Any
 
 from langchain_core.messages import AIMessage, HumanMessage, ToolMessage
@@ -111,8 +122,96 @@ def _format_tool_output(msg: ToolMessage) -> Panel:
     )
 
 
-def main() -> None:
-    """Entry point for the ``sandbox-agent`` CLI command."""
+def _api_is_healthy(url: str = "http://127.0.0.1:8000") -> bool:
+    """Check if the Aegra API is reachable."""
+    try:
+        req = urllib.request.Request(f"{url.rstrip('/')}/health")
+        with urllib.request.urlopen(req, timeout=3) as r:
+            return r.status == 200
+    except Exception:
+        return False
+
+
+def _run_api() -> None:
+    """Run the Aegra API (aegra dev)."""
+    subprocess.run(
+        ["aegra", "dev"],
+        cwd=Path.cwd(),
+    )
+    sys.exit(0)
+
+
+def _run_ui(start_api_if_needed: bool = True) -> None:
+    """Run the Streamlit frontend. Starts API in background if not running."""
+    api_url = "http://127.0.0.1:8000"
+    if _api_is_healthy(api_url):
+        pass  # API already running
+    elif start_api_if_needed:
+        proc = subprocess.Popen(
+            ["aegra", "dev"],
+            cwd=Path.cwd(),
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+            start_new_session=True,
+        )
+        console = __import__("rich.console", fromlist=["Console"]).Console()
+        console.print("[dim]API não detectada. Iniciando em background...[/dim]")
+        for _ in range(30):
+            time.sleep(1)
+            if _api_is_healthy(api_url):
+                console.print("[green]API pronta em http://localhost:8000[/green]")
+                break
+        else:
+            console.print(
+                "[yellow]Timeout aguardando API. O frontend pode falhar ao conectar.[/yellow]"
+            )
+    else:
+        console = __import__("rich.console", fromlist=["Console"]).Console()
+        console.print(
+            "[red]API não está rodando. Execute [bold]uv run sandbox-agent api[/bold] primeiro.[/red]"
+        )
+        sys.exit(1)
+
+    root = Path(__file__).resolve().parent.parent.parent
+    app_path = root / "frontend" / "app.py"
+    if not app_path.exists():
+        print(f"Error: frontend app not found at {app_path}", file=sys.stderr)
+        sys.exit(1)
+    sys.argv = ["streamlit", "run", str(app_path), "--server.port=8501"]
+    try:
+        import streamlit.web.cli as stcli
+    except ImportError:
+        console = __import__("rich.console", fromlist=["Console"]).Console()
+        console.print(
+            "[red]Dependências do frontend não instaladas.[/red]\n"
+            "Execute: [cyan]uv sync --extra frontend[/cyan]"
+        )
+        sys.exit(1)
+
+    stcli.main()
+
+
+def run_frontend_entry() -> None:
+    """Entry point for sandbox-agent-frontend (backward compat, with auto-start API)."""
+    _run_ui()
+
+
+def _print_help() -> None:
+    console = __import__("rich.console", fromlist=["Console"]).Console()
+    console.print(
+        "[bold]sandbox-agent[/bold] — LangGraph agent com execução sandboxed\n"
+        "\n[cyan]Uso:[/cyan]\n"
+        "  uv run sandbox-agent [comando]\n"
+        "\n[cyan]Comandos:[/cyan]\n"
+        "  cli       — CLI interativo (Rich REPL)\n"
+        "  mcp       — MCP server (Cursor, Claude Desktop)\n"
+        "  api       — REST API (Aegra)\n"
+        "  ui        — Streamlit UI (inicia API automaticamente se necessário)\n"
+    )
+
+
+def run_interactive_cli() -> None:
+    """Run the interactive CLI (Rich REPL)."""
     console = Console()
 
     settings = get_settings()
@@ -258,6 +357,29 @@ def main() -> None:
     finally:
         console.print("[dim]Cleaning up containers...[/dim]")
         manager.cleanup_all()
+
+
+def main() -> None:
+    """Entry point — dispatches to subcommands."""
+    args = sys.argv[1:]
+    cmd = args[0] if args else None
+
+    if cmd == "cli" or cmd is None:
+        run_interactive_cli()
+    elif cmd == "mcp":
+        from sandbox_agent.mcp_server import main as mcp_main
+
+        mcp_main()
+    elif cmd == "api":
+        _run_api()
+    elif cmd == "ui":
+        _run_ui()
+    elif cmd in ("-h", "--help", "help"):
+        _print_help()
+    else:
+        print(f"Comando desconhecido: {cmd}", file=sys.stderr)
+        _print_help()
+        sys.exit(1)
 
 
 if __name__ == "__main__":
