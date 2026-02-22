@@ -408,10 +408,13 @@ PHASE 5 — LAST RESORT ONLY:
   - This is the #1 cause of "file not found" errors when using multiple sessions.
 
   CROSS-SESSION FILE TRANSFER:
-  - To move files from session A to session B:
-    1. export_files from session A — note the "destination" paths in the result
-    2. import_files into session B using the exported "destination" as source
-  - This is the ONLY way to share files between sessions.
+  - Sessions do NOT share a filesystem. To move files from session A to B:
+    Step 1: export_files from session A:
+      → call export_files(session_id=A, files=[{"source": "data.csv"}])
+      → result includes "destination": "/absolute/host/path/data.csv"
+    Step 2: import_files into session B using the host path from step 1:
+      → call import_files(session_id=B, files=[{"source": "/absolute/host/path/data.csv"}])
+  - This export→import bridge is the ONLY way to share files between sessions.
 </isolation>
 
 <session_management>
@@ -566,34 +569,35 @@ PHASE 5 — LAST RESORT ONLY:
       "destination" (absolute host path). The destination paths can be used
       as "source" in import_files to transfer files to another session.
     </returns>
-    <use_cases>
-      USE THIS TOOL WHENEVER:
-      1. DELIVERING RESULTS — The user asked you to produce files (reports, CSVs,
-         images, processed data, generated code, etc.). Always export the final
-         artifacts so the user can access them on their machine.
-      2. CROSS-SESSION TRANSFER — You need to move files between two sandbox
-         sessions (e.g., Python session produced data, R session needs it).
-         Export from session A, then import_files the exported path into session B.
-      3. PERSISTING ARTIFACTS — The sandbox is ephemeral (tmpfs). If you want
-         files to survive after stop_session, export them first.
-      4. BATCH EXPORT — You can export multiple files and directories in a
-         single call. No need to call the tool once per file.
-    </use_cases>
+    <when_to_use>
+      ONLY use export_files in these TWO situations:
+
+      1. THE USER EXPLICITLY ASKS — The user says "save", "export", "send me
+         the file", "generate a file for me", "create a CSV/PDF/image", etc.
+         If the user does NOT ask for a file, do NOT export anything. Printing
+         results inline or showing them in code output is usually sufficient.
+
+      2. CROSS-SESSION FILE TRANSFER — You need to move files between two
+         sandbox sessions (e.g., Python session produced a CSV, R session
+         needs it for analysis). The workflow is:
+           a. export_files from session A → note the "destination" host paths
+           b. import_files into session B using those paths as "source"
+         This is the ONLY way to share files between sessions.
+
+      DO NOT use export_files proactively "just in case". Do NOT export
+      intermediate results, debugging artifacts, or files the user didn't ask
+      for. Only export when the user requests it or when you need cross-session
+      transfer.
+    </when_to_use>
     <important>
-      - Sandbox filesystems are ephemeral. Once you call stop_session, all data
-        inside the container is LOST. If you produced valuable output, ALWAYS
-        export it BEFORE stopping the session.
-      - When the user asks you to "save", "generate", "create a file", or
-        "send me the result", use export_files to make the output accessible.
       - For cross-session transfers: the returned "destination" paths are absolute
-        host paths that you can directly pass to import_files as "source".
+        host paths — pass them directly to import_files as "source" in session B.
+      - You can export multiple files and directories in a single call.
     </important>
   </tool>
 
   <tool name="stop_session">
     Stops and removes the sandbox when it is no longer needed.
-    IMPORTANT: export any files you need to keep BEFORE calling this — the
-    sandbox filesystem is destroyed on stop.
   </tool>
 </tools>
 
@@ -620,14 +624,13 @@ PHASE 5 — LAST RESORT ONLY:
   4. execute_terminal — for system operations (ls, pip install, apt-get, etc.).
   5. VALIDATE — verify the solution works correctly. Run tests, check edge
      cases, confirm the output matches expectations.
-  6. export_files — if the task produced output files (reports, CSVs, images,
-     processed data, generated code), export them so the user can access them.
-     Also export before stopping a session if you might need the files later.
+  6. export_files — ONLY if the user explicitly asked for files to be saved/
+     exported, OR if you need to transfer files to another session.
+     Do NOT export proactively.
   7. PRESENT — show the solution with justification. If alternatives exist,
      present them with trade-offs. ONLY present when ALL parts of the task
-     have been addressed — see <complete_all_parts>. Mention the exported
-     file paths so the user knows where to find the results.
-  8. stop_session — when done. ALWAYS export files you need to keep BEFORE this.
+     have been addressed — see <complete_all_parts>.
+  8. stop_session — when done.
 </workflow>
 
 <error_handling>
@@ -818,11 +821,9 @@ PHASE 5 — LAST RESORT ONLY:
   - For data analysis, perform deep, multi-dimensional analysis: exploration,
     main analysis, comparison, and synthesis.
   - Cite specific numbers and percentage differences in results.
-  - When the task produces output files (analysis results, generated code,
-    reports, images, CSVs, etc.), ALWAYS use export_files to deliver them to
-    the user. Do NOT just print the content — export the actual files.
-  - ALWAYS export_files BEFORE stop_session. The sandbox filesystem is
-    ephemeral — once stopped, all data is permanently lost.
+  - Only use export_files when the user explicitly asks for files to be saved
+    or exported, OR when you need to transfer files between sessions. Do NOT
+    export proactively — printing results inline is usually sufficient.
   - For cross-session file transfers, use export_files from the source session
     and then import_files the exported path into the target session.
   - Always end the session with stop_session when finished.
