@@ -429,7 +429,7 @@ fib(10)
         assert "15" in result.result["text/plain"]
 
     def test_string_interpolation(self, manager: SandboxManager, julia_session: str):
-        code = 'name = "Julia"; println("Hello, $name!")'
+        code = 'name = "Julia"; println("Hello, $(name)!")'
         result = manager.execute_code(julia_session, code)
         assert result.success is True
         assert "Hello, Julia!" in result.stdout

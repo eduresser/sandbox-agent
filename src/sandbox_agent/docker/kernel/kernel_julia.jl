@@ -119,10 +119,11 @@ function execute(code::String, timeout_secs::Int=30)
         )
     elseif !ok
         response["success"] = false
+        actual_err = (err isa Base.LoadError) ? err.error : err
         tb_str = bt !== nothing ? sprint(showerror, err, bt) :
                                   sprint(showerror, err)
         response["error"] = Dict{String,Any}(
-            "type"      => string(nameof(typeof(err))),
+            "type"      => string(nameof(typeof(actual_err))),
             "message"   => sprint(showerror, err),
             "traceback" => tb_str,
         )

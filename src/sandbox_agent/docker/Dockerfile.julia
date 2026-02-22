@@ -3,12 +3,10 @@ FROM julia:1.11-bookworm
 # Prevent OpenBLAS from spawning dozens of threads inside a PID-limited
 # container (same rationale as the R image).
 ENV OPENBLAS_NUM_THREADS=1
+ENV JULIA_NUM_PRECOMPILE_PARALLEL=4
 
 COPY client/client_c.c /tmp/client_c.c
 
-# Compile the unified C client and strip build tools to keep the image lean.
-# A C binary (<1 MB) avoids the ~300 MB overhead of spawning a full
-# Julia process for every execute_code call.
 RUN apt-get update \
     && apt-get install -y --no-install-recommends gcc libc6-dev \
     && mkdir -p /kernel /client \
@@ -17,27 +15,28 @@ RUN apt-get update \
     && apt-get purge -y --auto-remove gcc libc6-dev \
     && rm -rf /var/lib/apt/lists/*
 
-# Install JSON3 to a shared depot readable by all users.
-# Precompilation happens here so container startup is fast.
-RUN mkdir -p /opt/julia-depot \
-    && JULIA_DEPOT_PATH=/opt/julia-depot \
-       julia -e 'using Pkg; Pkg.add("JSON3"); Pkg.precompile()' \
-    && chmod -R a+rX /opt/julia-depot
-
 RUN groupadd -g 65532 sandbox \
     && useradd -u 65532 -g 65532 -d /home/sandbox -m sandbox \
-    && mkdir -p /workspace /usr/local/julia/user-depot \
-    && chown sandbox:sandbox /workspace /usr/local/julia/user-depot
+    && mkdir -p /workspace \
+    && chown sandbox:sandbox /workspace
+
+# Pre-install JSON3 (kernel dependency) plus the most commonly
+# requested data-science packages and precompile everything during
+# docker build.  This is the single biggest win for Julia startup
+# time: Pkg.add becomes a no-op and `using` loads cached .so files
+# instead of triggering minutes of LLVM compilation at runtime.
+# The depot lives on the rootfs (not tmpfs) so .so files can be
+# mmap'd — Docker mounts /home/sandbox as tmpfs with noexec which
+# would break dlopen().
+RUN mkdir -p /opt/julia-depot \
+    && JULIA_DEPOT_PATH=/opt/julia-depot \
+       julia -e 'using Pkg; Pkg.add(["JSON3", "DataFrames", "CSV", "Statistics"]); Pkg.precompile()' \
+    && chown -R sandbox:sandbox /opt/julia-depot
 
 COPY kernel/kernel_julia.jl /kernel/kernel_julia.jl
 
 ENV KERNEL_PORT=8765
-
-# User depot lives on the rootfs (not tmpfs) so precompiled .so files
-# can be mmap'd. Docker mounts /home/sandbox as tmpfs with noexec,
-# which breaks dlopen() on shared objects — same issue R solves with
-# R_LIBS_USER on the rootfs.
-ENV JULIA_DEPOT_PATH="/usr/local/julia/user-depot:/opt/julia-depot"
+ENV JULIA_DEPOT_PATH="/opt/julia-depot"
 
 WORKDIR /workspace
 USER sandbox

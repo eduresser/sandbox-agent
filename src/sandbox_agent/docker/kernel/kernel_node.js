@@ -120,13 +120,19 @@ async function execute(code, timeout = 30) {
       new vm.Script(source);
     } catch (parseErr) {
       if (parseErr instanceof SyntaxError && source.includes("await")) {
-        const wrapped = `(async () => {\n${source}\n})()`;
+        const wrappedReturn = `(async () => { return (\n${source}\n) })()`;
+        const wrappedBlock = `(async () => {\n${source}\n})()`;
         try {
-          new vm.Script(wrapped);
-          source = wrapped;
+          new vm.Script(wrappedReturn);
+          source = wrappedReturn;
         } catch {
-          // Wrapper doesn't fix the SyntaxError — let execution
-          // report the original error to the user.
+          try {
+            new vm.Script(wrappedBlock);
+            source = wrappedBlock;
+          } catch {
+            // Neither wrapper fixes the SyntaxError — let execution
+            // report the original error to the user.
+          }
         }
       }
     }

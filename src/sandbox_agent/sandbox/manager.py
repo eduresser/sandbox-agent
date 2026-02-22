@@ -61,10 +61,11 @@ RUNTIME_CONFIG: dict[str, dict[str, Any]] = {
         "client_cmd": ["/client/client_c"],
         "install_cmd": lambda pkgs: [
             "sh", "-c",
-            "JULIA_DEPOT_PATH=/opt/julia-depot JULIA_NUM_PRECOMPILE_PARALLEL=1 "
+            "JULIA_DEPOT_PATH=/opt/julia-depot "
             "julia -e 'using Pkg; Pkg.add(["
             + ", ".join(f'"{p}"' for p in pkgs)
-            + "])'",
+            + "]); Pkg.precompile()'"
+            " && chown -R 65532:65532 /opt/julia-depot",
         ],
         "install_user": "root",
     },
@@ -290,11 +291,24 @@ class SandboxManager:
         settings = get_settings()
         timeout = timeout or settings.EXECUTION_TIMEOUT_SECONDS
 
-        resp = self._send_to_kernel(
-            session_id,
-            {"action": "execute", "code": code, "timeout": timeout},
-            timeout=timeout + 10,
-        )
+        try:
+            resp = self._send_to_kernel(
+                session_id,
+                {"action": "execute", "code": code, "timeout": timeout},
+                timeout=timeout + 10,
+            )
+        except TimeoutError:
+            return ExecutionResult(
+                success=False,
+                stdout="",
+                stderr="",
+                result=None,
+                error={
+                    "type": "TimeoutError",
+                    "message": f"Execution timed out after {timeout}s",
+                },
+                figures=[],
+            )
 
         if "stdout" in resp:
             resp["stdout"] = truncate_field(resp["stdout"], settings.MAX_STDOUT_CHARS)
