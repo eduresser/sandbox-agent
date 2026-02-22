@@ -31,6 +31,22 @@ else
     echo "User '$USER_NAME' is already in the docker group."
 fi
 
+# Build sandbox images (python, node, r, julia)
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+DOCKER_DIR="$SCRIPT_DIR/src/sandbox_agent/docker"
+
+if [ -d "$DOCKER_DIR" ]; then
+    echo ""
+    echo "Building sandbox Docker images..."
+    docker build -f "$DOCKER_DIR/Dockerfile.python" -t sandbox-python:latest "$DOCKER_DIR"
+    docker build -f "$DOCKER_DIR/Dockerfile.node" -t sandbox-node:latest "$DOCKER_DIR"
+    docker build -f "$DOCKER_DIR/Dockerfile.r" -t sandbox-r:latest "$DOCKER_DIR"
+    docker build -f "$DOCKER_DIR/Dockerfile.julia" -t sandbox-julia:latest "$DOCKER_DIR"
+    echo "All sandbox images built."
+else
+    echo "Warning: Docker directory not found ($DOCKER_DIR). Skipping image build."
+fi
+
 # Validate access
 if sg docker -c "docker ps" &>/dev/null; then
     echo ""

@@ -11,17 +11,61 @@ ENV OPENBLAS_NUM_THREADS=1
 
 COPY client/client_c.c /tmp/client_c.c
 
-# Compile the unified C client and install base R packages, then strip build
-# tools to keep the image lean. Additional system libraries can be
-# installed at runtime via execute_terminal when TERMINAL_ROOT=true.
+# 1. Install system libraries needed by popular R packages:
+#    - libxml2-dev      → xml2 (tidyverse dep)
+#    - libcurl4-openssl-dev → httr2, curl
+#    - libssl-dev        → openssl, httr2
+#    - libfontconfig1-dev, libfreetype6-dev, libharfbuzz-dev,
+#      libfribidi-dev    → textshaping, ragg (ggplot2 text rendering)
+#    - libpng-dev, libtiff-dev, libjpeg-dev → image output devices
+#    - libcairo2-dev     → cairo graphics device (ggplot2)
+#    - libgit2-dev       → gert/git2r (devtools)
+#    - libsqlite3-dev    → RSQLite
+#    - libpq-dev         → RPostgres
+# 2. Compile the unified C client.
+# 3. Install kernel deps + most popular R packages (by CRAN downloads).
+#    PPM provides pre-compiled binaries so this is fast.
+#
+# Packages chosen by CRAN download rank (rpkg.net) and breadth:
+#   Tidyverse:  tidyverse (dplyr, ggplot2, tidyr, readr, purrr, tibble,
+#               stringr, forcats + deps like rlang, cli, vctrs, scales)
+#   Data:       data.table, readxl, haven
+#   Web/API:    httr2
+#   Database:   DBI, RSQLite
+#   Reporting:  rmarkdown, knitr
+#   Dev tools:  devtools
+#   Stats/ML:   glmnet, randomForest
 RUN apt-get update \
-    && apt-get install -y --no-install-recommends gcc libc6-dev \
+    && apt-get install -y --no-install-recommends \
+       gcc libc6-dev \
+       libxml2-dev libcurl4-openssl-dev libssl-dev \
+       libfontconfig1-dev libfreetype6-dev libharfbuzz-dev libfribidi-dev \
+       libpng-dev libtiff-dev libjpeg-dev libcairo2-dev \
+       libgit2-dev libsqlite3-dev libpq-dev \
+       pandoc \
     && mkdir -p /kernel /client \
     && gcc -O2 -static -o /client/client_c /tmp/client_c.c \
     && rm /tmp/client_c.c \
-    && Rscript -e "install.packages(c('jsonlite', 'base64enc'), Ncpus=4)" \
+    && Rscript -e "install.packages(c( \
+         'jsonlite', 'base64enc', \
+         'tidyverse', 'data.table', 'readxl', 'haven', \
+         'httr2', \
+         'DBI', 'RSQLite', \
+         'rmarkdown', 'knitr', \
+         'devtools', \
+         'glmnet', 'randomForest' \
+       ), Ncpus=4)" \
     && apt-mark manual make libgomp1 \
+       libxml2 libcurl4t64 libssl3t64 \
+       libfontconfig1 libfreetype6 libharfbuzz0b libfribidi0 \
+       libpng16-16t64 libtiff6 libjpeg-turbo8 libcairo2 \
+       libgit2-1.7 libsqlite3-0 libpq5 \
+       pandoc \
     && apt-get purge -y --auto-remove gcc libc6-dev \
+       libxml2-dev libcurl4-openssl-dev libssl-dev \
+       libfontconfig1-dev libfreetype6-dev libharfbuzz-dev libfribidi-dev \
+       libpng-dev libtiff-dev libjpeg-dev libcairo2-dev \
+       libgit2-dev libsqlite3-dev libpq-dev \
     && rm -rf /var/lib/apt/lists/*
 
 RUN groupadd -g 65532 sandbox \
