@@ -9,13 +9,17 @@ OOM, or disk-fill attacks.
 from __future__ import annotations
 
 import atexit
+import contextvars
 import io
 import json
+import logging
 import signal
 import subprocess
 import tarfile
+import threading
 import time
 import uuid
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
@@ -33,6 +37,12 @@ from sandbox_agent.sandbox.models import (
     truncate_field,
 )
 from sandbox_agent.settings import get_settings
+
+logger = logging.getLogger(__name__)
+
+current_thread_id: contextvars.ContextVar[str | None] = contextvars.ContextVar(
+    "current_thread_id", default=None,
+)
 
 SANDBOX_UID = 65532
 SANDBOX_GID = 65532
@@ -101,11 +111,15 @@ class SandboxManager:
         self.client = docker.from_env()
         self.sessions: dict[str, SessionInfo] = {}
         self._containers: dict[str, Any] = {}
+        self.thread_sessions: dict[str, set[str]] = {}
+        self._lock = threading.Lock()
         self.docker_dir = (
             Path(docker_dir) if docker_dir else Path(__file__).parent.parent / "docker"
         )
         self._cleanup_registered = False
         self._register_cleanup()
+        self._cleanup_orphaned_containers()
+        self._start_gc()
 
     # ── Image Build ────────────────────────────────────
 
@@ -120,6 +134,139 @@ class SandboxManager:
                 tag=config["image"],
                 rm=True,
             )
+
+    # ── Orphan Cleanup & GC ──────────────────────────────
+
+    def _cleanup_orphaned_containers(self) -> None:
+        """Remove sandbox containers left over from previous runs."""
+        try:
+            containers = self.client.containers.list(
+                all=True,
+                filters={"label": "sandbox-agent=true"},
+            )
+        except Exception:
+            logger.warning("Failed to list orphaned containers", exc_info=True)
+            return
+
+        for container in containers:
+            cid = container.short_id
+            try:
+                container.stop(timeout=3)
+                container.remove(force=True)
+                logger.info("Removed orphaned container %s", cid)
+            except Exception:
+                logger.warning("Failed to remove orphaned container %s", cid, exc_info=True)
+
+    def _start_gc(self) -> None:
+        """Launch a daemon thread that periodically reaps idle/expired sessions."""
+        t = threading.Thread(target=self._gc_loop, daemon=True, name="sandbox-gc")
+        t.start()
+
+    def _gc_loop(self) -> None:
+        settings = get_settings()
+        while True:
+            time.sleep(settings.GC_INTERVAL_SECONDS)
+            try:
+                self._gc_threads()
+            except Exception:
+                logger.exception("GC thread-based loop error")
+            try:
+                self._gc_session_hard_cap()
+            except Exception:
+                logger.exception("GC session hard-cap error")
+
+    # ── Thread-based GC (primary) ─────────────────────
+
+    def _gc_threads(self) -> None:
+        """Evict threads by TTL and capacity, deleting from DB + killing containers."""
+        try:
+            from sandbox_agent.clients import get_db_conninfo
+            import psycopg
+        except Exception:
+            logger.debug("DB not available for thread GC, skipping")
+            return
+
+        settings = get_settings()
+        now = datetime.now(timezone.utc)
+
+        try:
+            with psycopg.connect(get_db_conninfo(), autocommit=False) as conn:
+                with conn.cursor() as cur:
+                    cur.execute(
+                        "SELECT thread_id, updated_at "
+                        "FROM thread "
+                        "WHERE status != 'busy' "
+                        "ORDER BY updated_at DESC"
+                    )
+                    rows = cur.fetchall()
+        except Exception:
+            logger.debug("Failed to query threads for GC", exc_info=True)
+            return
+
+        threads_to_keep: list[str] = []
+        threads_to_evict: list[tuple[str, str]] = []
+
+        for thread_id, updated_at in rows:
+            idle = (now - updated_at).total_seconds()
+
+            if idle > settings.SESSION_IDLE_TTL_SECONDS:
+                threads_to_evict.append((thread_id, f"idle for {idle:.0f}s"))
+            elif len(threads_to_keep) < settings.MAX_ACTIVE_THREADS:
+                threads_to_keep.append(thread_id)
+            else:
+                threads_to_evict.append(
+                    (thread_id, f"exceeded max active threads ({settings.MAX_ACTIVE_THREADS})")
+                )
+
+        for thread_id, reason in threads_to_evict:
+            logger.info("GC: evicting thread %s (%s)", thread_id[:12], reason)
+            self.cleanup_thread_sessions(thread_id)
+            self._delete_thread_from_db(thread_id)
+
+    def _delete_thread_from_db(self, thread_id: str) -> None:
+        """Delete a thread and all its checkpoint data from PostgreSQL."""
+        try:
+            from sandbox_agent.clients import get_db_conninfo
+            import psycopg
+        except Exception:
+            return
+
+        try:
+            with psycopg.connect(get_db_conninfo(), autocommit=False) as conn:
+                with conn.cursor() as cur:
+                    for table in ("checkpoint_writes", "checkpoint_blobs", "checkpoints"):
+                        cur.execute(
+                            f"DELETE FROM {table} WHERE thread_id = %s",  # noqa: S608
+                            (thread_id,),
+                        )
+                    # CASCADE deletes runs automatically
+                    cur.execute("DELETE FROM thread WHERE thread_id = %s", (thread_id,))
+                conn.commit()
+            logger.info("GC: deleted thread %s from DB", thread_id[:12])
+        except Exception:
+            logger.warning("GC: failed to delete thread %s from DB", thread_id[:12], exc_info=True)
+
+    # ── Session hard-cap GC (safety net) ──────────────
+
+    def _gc_session_hard_cap(self) -> None:
+        """Kill any container that exceeds SESSION_MAX_LIFETIME_SECONDS."""
+        settings = get_settings()
+        now = datetime.now(timezone.utc)
+
+        with self._lock:
+            snapshot = list(self.sessions.items())
+
+        for sid, info in snapshot:
+            lifetime = (now - info.created_at).total_seconds()
+            if lifetime > settings.SESSION_MAX_LIFETIME_SECONDS:
+                logger.info("GC: hard-cap stop session %s (lifetime %.0fs)", sid, lifetime)
+                self.stop_session(sid)
+
+    def _touch_session(self, session_id: str) -> None:
+        """Update the last_activity timestamp for a session."""
+        info = self.sessions.get(session_id)
+        if info:
+            info.last_activity = datetime.now(timezone.utc)
 
     # ── Container Health ───────────────────────────────
 
@@ -235,15 +382,25 @@ class SandboxManager:
         network: bool = True,
     ) -> SessionInfo:
         settings = get_settings()
+        thread_id = current_thread_id.get(None)
 
         if runtime not in RUNTIME_CONFIG:
             raise ValueError(f"Runtime '{runtime}' not supported. Use: {list(RUNTIME_CONFIG)}")
 
-        if len(self.sessions) >= settings.MAX_SESSIONS:
-            raise RuntimeError(
-                f"Maximum number of sessions ({settings.MAX_SESSIONS}) reached. "
-                "Stop an existing session first."
-            )
+        with self._lock:
+            if len(self.sessions) >= settings.MAX_SESSIONS:
+                raise RuntimeError(
+                    f"Maximum number of sessions ({settings.MAX_SESSIONS}) reached. "
+                    "Stop an existing session first."
+                )
+
+            if thread_id is not None:
+                thread_count = len(self.thread_sessions.get(thread_id, set()))
+                if thread_count >= settings.MAX_SESSIONS_PER_THREAD:
+                    raise RuntimeError(
+                        f"Maximum sessions per conversation ({settings.MAX_SESSIONS_PER_THREAD}) reached. "
+                        "Stop an existing session first."
+                    )
 
         self._ensure_image(runtime)
 
@@ -279,11 +436,15 @@ class SandboxManager:
             container_name=container_name,
             runtime=runtime,
             status="starting",
+            thread_id=thread_id,
             dependencies=dict(dependencies or {}),
         )
 
-        self._containers[session_id] = container
-        self.sessions[session_id] = info
+        with self._lock:
+            self._containers[session_id] = container
+            self.sessions[session_id] = info
+            if thread_id is not None:
+                self.thread_sessions.setdefault(thread_id, set()).add(session_id)
 
         self._wait_for_kernel(session_id)
 
@@ -297,6 +458,7 @@ class SandboxManager:
         self, session_id: str, code: str, timeout: int | None = None
     ) -> ExecutionResult:
         self._check_session(session_id)
+        self._touch_session(session_id)
         settings = get_settings()
         timeout = timeout or settings.EXECUTION_TIMEOUT_SECONDS
 
@@ -333,6 +495,7 @@ class SandboxManager:
 
     def execute_terminal(self, session_id: str, command: str) -> TerminalResult:
         self._check_session(session_id)
+        self._touch_session(session_id)
         self._assert_container_alive(session_id)
         container = self._containers[session_id]
         settings = get_settings()
@@ -396,6 +559,7 @@ class SandboxManager:
             ImportResult with per-file status.
         """
         self._check_session(session_id)
+        self._touch_session(session_id)
         self._assert_container_alive(session_id)
         info = self.sessions[session_id]
 
@@ -493,6 +657,7 @@ class SandboxManager:
             ExportResult with per-file status.
         """
         self._check_session(session_id)
+        self._touch_session(session_id)
         self._assert_container_alive(session_id)
         info = self.sessions[session_id]
 
@@ -576,22 +741,42 @@ class SandboxManager:
         return ExportResult(success=all_ok, files=results)
 
     def stop_session(self, session_id: str) -> bool:
-        if session_id not in self._containers:
+        with self._lock:
+            container = self._containers.pop(session_id, None)
+            info = self.sessions.pop(session_id, None)
+            if info and info.thread_id:
+                ts = self.thread_sessions.get(info.thread_id)
+                if ts:
+                    ts.discard(session_id)
+                    if not ts:
+                        del self.thread_sessions[info.thread_id]
+
+        if container is None:
             return False
 
-        container = self._containers[session_id]
         try:
             container.stop(timeout=3)
             container.remove(force=True)
         except Exception:
             pass
 
-        self._containers.pop(session_id, None)
-        self.sessions.pop(session_id, None)
         return True
 
+    def cleanup_thread_sessions(self, thread_id: str) -> int:
+        """Stop all sessions belonging to a specific thread. Returns count stopped."""
+        with self._lock:
+            sids = list(self.thread_sessions.get(thread_id, set()))
+
+        count = 0
+        for sid in sids:
+            if self.stop_session(sid):
+                count += 1
+        return count
+
     def cleanup_all(self) -> None:
-        for sid in list(self.sessions):
+        with self._lock:
+            sids = list(self.sessions)
+        for sid in sids:
             self.stop_session(sid)
 
     # ── Internal ───────────────────────────────────────
@@ -599,6 +784,15 @@ class SandboxManager:
     def _check_session(self, session_id: str) -> None:
         if session_id not in self._containers:
             raise ValueError(f"Session '{session_id}' not found")
+
+        thread_id = current_thread_id.get(None)
+        if thread_id is not None:
+            info = self.sessions.get(session_id)
+            if info and info.thread_id and info.thread_id != thread_id:
+                raise PermissionError(
+                    f"Session '{session_id}' belongs to another conversation. "
+                    "Use a session from your own conversation or create a new one."
+                )
 
     def _register_cleanup(self) -> None:
         if self._cleanup_registered:

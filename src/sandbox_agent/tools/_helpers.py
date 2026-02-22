@@ -5,14 +5,16 @@ from __future__ import annotations
 import json
 import traceback
 
-from sandbox_agent.sandbox.manager import ContainerDiedError, SandboxManager
+from sandbox_agent.sandbox.manager import ContainerDiedError, SandboxManager, current_thread_id
 
 
 def active_sessions_summary(manager: SandboxManager) -> list[dict]:
-    """Return a compact summary of all active sessions."""
+    """Return a compact summary of sessions visible to the current thread."""
+    thread_id = current_thread_id.get(None)
     return [
         {"session_id": info.session_id, "runtime": info.runtime, "status": info.status}
         for info in manager.sessions.values()
+        if thread_id is None or info.thread_id is None or info.thread_id == thread_id
     ]
 
 

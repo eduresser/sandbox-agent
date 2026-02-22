@@ -32,7 +32,14 @@ class Settings(BaseSettings):
     CONTAINER_TMPFS_SIZE: str = "200m"
     EXECUTION_TIMEOUT_SECONDS: int = 30
     MAX_SESSIONS: int = 5
+    MAX_SESSIONS_PER_THREAD: int = 3
     TERMINAL_ROOT: bool = False
+
+    # ── Session Lifecycle / GC ──
+    SESSION_IDLE_TTL_SECONDS: int = 1800
+    SESSION_MAX_LIFETIME_SECONDS: int = 7200
+    GC_INTERVAL_SECONDS: int = 60
+    MAX_ACTIVE_THREADS: int = 10
 
     # ── Output Limits (characters) ──
     MAX_STDOUT_CHARS: int = 20_000

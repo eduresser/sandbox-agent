@@ -13,16 +13,20 @@ from psycopg_pool import ConnectionPool
 from sandbox_agent.settings import get_settings
 
 
+def get_db_conninfo() -> str:
+    """Return a PostgreSQL connection string built from settings."""
+    s = get_settings()
+    return (
+        f"postgresql://{s.POSTGRES_USER}:{s.POSTGRES_PASSWORD}"
+        f"@{s.POSTGRES_HOST}:{s.POSTGRES_PORT}/{s.POSTGRES_DB}"
+    )
+
+
 @lru_cache(maxsize=1)
 def get_checkpointer() -> PostgresSaver:
     """Return a cached PostgreSQL checkpointer (shared with Aegra)."""
-    settings = get_settings()
-    checkpoint_db_url = (
-        f"postgresql://{settings.POSTGRES_USER}:{settings.POSTGRES_PASSWORD}"
-        f"@{settings.POSTGRES_HOST}:{settings.POSTGRES_PORT}/{settings.POSTGRES_DB}"
-    )
     pool = ConnectionPool(
-        conninfo=checkpoint_db_url,
+        conninfo=get_db_conninfo(),
         kwargs={"autocommit": True, "row_factory": dict_row},
         min_size=1,
         max_size=4,

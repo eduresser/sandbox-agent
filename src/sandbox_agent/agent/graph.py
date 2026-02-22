@@ -8,12 +8,13 @@ from typing import Any
 
 from langchain_core.language_models import BaseChatModel
 from langchain_core.messages import AIMessage, SystemMessage, ToolMessage
+from langchain_core.runnables import RunnableConfig
 from langgraph.graph import END, StateGraph
 
 from sandbox_agent.agent.prompts import SYSTEM_PROMPT
 from sandbox_agent.agent.state import AgentState
 from sandbox_agent.clients import get_chat_model
-from sandbox_agent.sandbox.manager import SandboxManager
+from sandbox_agent.sandbox.manager import SandboxManager, current_thread_id
 from sandbox_agent.settings import get_settings
 from sandbox_agent.tools import create_tools
 
@@ -110,25 +111,30 @@ def build_agent(
         v = vision_state["supported"]
         return v is True or v is None  # None means "try it"
 
-    def tool_node(state: AgentState) -> dict[str, Any]:
-        last_msg = state["messages"][-1]
-        assert isinstance(last_msg, AIMessage) and last_msg.tool_calls
+    def tool_node(state: AgentState, config: RunnableConfig) -> dict[str, Any]:
+        thread_id = (config.get("configurable") or {}).get("thread_id")
+        token = current_thread_id.set(thread_id)
+        try:
+            last_msg = state["messages"][-1]
+            assert isinstance(last_msg, AIMessage) and last_msg.tool_calls
 
-        result_messages: list[ToolMessage] = []
-        for tc in last_msg.tool_calls:
-            tool_fn = tools_by_name[tc["name"]]
-            raw_result = tool_fn.invoke(tc["args"])
+            result_messages: list[ToolMessage] = []
+            for tc in last_msg.tool_calls:
+                tool_fn = tools_by_name[tc["name"]]
+                raw_result = tool_fn.invoke(tc["args"])
 
-            if tc["name"] == "execute_code":
-                content = _process_execute_code_content(raw_result, _vision_enabled())
-            else:
-                content = raw_result
+                if tc["name"] == "execute_code":
+                    content = _process_execute_code_content(raw_result, _vision_enabled())
+                else:
+                    content = raw_result
 
-            result_messages.append(
-                ToolMessage(content=content, tool_call_id=tc["id"], name=tc["name"])
-            )
+                result_messages.append(
+                    ToolMessage(content=content, tool_call_id=tc["id"], name=tc["name"])
+                )
 
-        return {"messages": result_messages}
+            return {"messages": result_messages}
+        finally:
+            current_thread_id.reset(token)
 
     def call_model(state: AgentState) -> dict[str, Any]:
         messages = state["messages"]

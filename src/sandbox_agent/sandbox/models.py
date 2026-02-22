@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
+from datetime import datetime, timezone
 
 TRUNCATION_NOTICE = "\n\n... [truncated — {original} chars total, showing first {limit}]"
 
@@ -16,6 +17,10 @@ def truncate_field(value: str, max_chars: int) -> str:
     )
 
 
+def _utcnow() -> datetime:
+    return datetime.now(timezone.utc)
+
+
 @dataclass
 class SessionInfo:
     """Metadata for an active sandbox session (Docker container)."""
@@ -25,8 +30,11 @@ class SessionInfo:
     container_name: str
     runtime: str
     status: str
+    thread_id: str | None = None
     dependencies: dict[str, str] = field(default_factory=dict)
     stderr: str = ""
+    created_at: datetime = field(default_factory=_utcnow)
+    last_activity: datetime = field(default_factory=_utcnow)
 
 
 @dataclass
