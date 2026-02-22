@@ -46,8 +46,16 @@ class Settings(BaseSettings):
     # ── Agent ──
     MAX_ITERATIONS: int = 25
 
-    # ── Checkpointer (SQLite) ──
+    # ── Checkpointer ──
+    # SQLite: set CHECKPOINT_DB_PATH (e.g. ./outputs/.checkpoints.sqlite)
+    # PostgreSQL: set DATABASE_URL or POSTGRES_* (shares DB with Aegra)
     CHECKPOINT_DB_PATH: str | None = None
+    DATABASE_URL: str | None = None
+    POSTGRES_USER: str | None = None
+    POSTGRES_PASSWORD: str | None = None
+    POSTGRES_DB: str | None = None
+    POSTGRES_HOST: str | None = None
+    POSTGRES_PORT: str | None = None
 
 
 @lru_cache(maxsize=1)

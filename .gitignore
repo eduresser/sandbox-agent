@@ -50,3 +50,5 @@ Thumbs.db
 
 data/
 outputs/
+
+.langgraph_api/

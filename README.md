@@ -93,6 +93,17 @@ Add to the Claude Desktop MCP config:
 
 The MCP server exposes the same 6 tools as the CLI agent. The `import_files` tool accepts file content directly (as text or base64 via `file_content`/`encoding` keys) or host paths (via `source`/`destination` keys), since MCP clients don't always share a filesystem with the server. The `export_files` tool accepts an optional `output_dir` override.
 
+### Aegra (REST API)
+
+Run the agent as a REST API via [Aegra](https://aegra.dev/) (self-hosted LangGraph Platform alternative):
+
+```bash
+# Add to .env: DATABASE_URL=postgresql://sandbox_agent:sandbox_agent_secret@localhost:5432/sandbox_agent
+uv run aegra dev
+```
+
+The server runs at `http://localhost:8000` with OpenAPI docs at `/docs`. Use the LangGraph SDK or curl to create assistants, threads, and stream runs. Compatible with Agent Chat UI, LangGraph Studio, and CopilotKit.
+
 ### Programmatic
 
 ```python
