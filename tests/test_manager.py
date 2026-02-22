@@ -138,18 +138,69 @@ class TestInstallPackages:
             manager.stop_session(info.session_id)
 
 
-class TestUploadFiles:
-    def test_upload_and_verify(self, manager: SandboxManager, python_session: str):
+class TestImportFiles:
+    def test_import_single_file(self, manager: SandboxManager, python_session: str):
         with tempfile.NamedTemporaryFile(mode="w", suffix=".csv", delete=False) as f:
             f.write("a,b,c\n1,2,3\n")
             f.flush()
             local_path = f.name
 
-        result = manager.upload_file(python_session, local_path)
-        assert result["success"] is True
+        result = manager.import_files(python_session, [
+            {"source": local_path, "destination": Path(local_path).name},
+        ])
+        assert result.success is True
+        assert len(result.files) == 1
+        assert result.files[0].success is True
 
         ls_result = manager.execute_terminal(python_session, "ls /workspace/")
         assert Path(local_path).name in ls_result.stdout
+
+    def test_import_directory(self, manager: SandboxManager, python_session: str):
+        import os
+
+        tmpdir = tempfile.mkdtemp(prefix="sandbox_import_test_")
+        try:
+            with open(os.path.join(tmpdir, "a.txt"), "w") as f:
+                f.write("aaa")
+            with open(os.path.join(tmpdir, "b.txt"), "w") as f:
+                f.write("bbb")
+
+            result = manager.import_files(python_session, [
+                {"source": tmpdir, "destination": "imported_dir"},
+            ])
+            assert result.success is True
+
+            ls_result = manager.execute_terminal(python_session, "ls /workspace/imported_dir/")
+            assert "a.txt" in ls_result.stdout
+            assert "b.txt" in ls_result.stdout
+        finally:
+            import shutil
+            shutil.rmtree(tmpdir, ignore_errors=True)
+
+    def test_import_multiple_files(self, manager: SandboxManager, python_session: str):
+        files = []
+        for i in range(2):
+            f = tempfile.NamedTemporaryFile(mode="w", suffix=f"_{i}.txt", delete=False)
+            f.write(f"content_{i}")
+            f.flush()
+            files.append(f.name)
+            f.close()
+
+        result = manager.import_files(python_session, [
+            {"source": files[0], "destination": Path(files[0]).name},
+            {"source": files[1], "destination": Path(files[1]).name},
+        ])
+        assert result.success is True
+        assert len(result.files) == 2
+        assert all(fr.success for fr in result.files)
+
+    def test_import_nonexistent_source(self, manager: SandboxManager, python_session: str):
+        result = manager.import_files(python_session, [
+            {"source": "/tmp/definitely_does_not_exist_12345.txt", "destination": "x.txt"},
+        ])
+        assert result.success is False
+        assert result.files[0].success is False
+        assert "not found" in result.files[0].error.lower()
 
 
 class TestRRuntime:
@@ -336,14 +387,16 @@ class TestNodeRuntime:
         finally:
             manager.stop_session(info.session_id)
 
-    def test_upload_and_read_file(self, manager: SandboxManager, node_session: str):
+    def test_import_and_read_file(self, manager: SandboxManager, node_session: str):
         with tempfile.NamedTemporaryFile(mode="w", suffix=".json", delete=False) as f:
             f.write('{"key": "value"}')
             f.flush()
             local_path = f.name
 
-        result = manager.upload_file(node_session, local_path)
-        assert result["success"] is True
+        result = manager.import_files(node_session, [
+            {"source": local_path, "destination": Path(local_path).name},
+        ])
+        assert result.success is True
 
         filename = Path(local_path).name
         code = f'JSON.parse(require("fs").readFileSync("/workspace/{filename}", "utf8"))'
@@ -485,14 +538,16 @@ greet(42)
         finally:
             manager.stop_session(info.session_id)
 
-    def test_upload_and_read_file(self, manager: SandboxManager, julia_session: str):
+    def test_import_and_read_file(self, manager: SandboxManager, julia_session: str):
         with tempfile.NamedTemporaryFile(mode="w", suffix=".txt", delete=False) as f:
             f.write("hello from julia test")
             f.flush()
             local_path = f.name
 
-        result = manager.upload_file(julia_session, local_path)
-        assert result["success"] is True
+        result = manager.import_files(julia_session, [
+            {"source": local_path, "destination": Path(local_path).name},
+        ])
+        assert result.success is True
 
         filename = Path(local_path).name
         code = f'read("/workspace/{filename}", String)'

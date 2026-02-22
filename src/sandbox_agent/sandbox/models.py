@@ -51,6 +51,26 @@ class TerminalResult:
 
 
 @dataclass
+class ImportFileResult:
+    """Result of importing a single file/directory from the host into the sandbox."""
+
+    source: str
+    destination: str
+    success: bool
+    size: int = 0
+    error: str = ""
+
+
+@dataclass
+class ImportResult:
+    """Aggregated result of an import_files operation."""
+
+    success: bool
+    files: list[ImportFileResult] = field(default_factory=list)
+    error: str = ""
+
+
+@dataclass
 class ExportFileResult:
     """Result of exporting a single file from the sandbox to the host."""
 

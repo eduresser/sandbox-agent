@@ -48,7 +48,7 @@ class TestToolCreation:
             "create_session",
             "execute_code",
             "execute_terminal",
-            "upload_file",
+            "import_files",
             "export_files",
             "stop_session",
         }

@@ -23,7 +23,7 @@ mcp = FastMCP(
     instructions=(
         "Sandboxed code execution in Docker containers. "
         "Create isolated Python/Node.js/R/Julia environments, execute code with "
-        "persistent state, run terminal commands, and upload files. "
+        "persistent state, run terminal commands, and import/export files. "
         "Everything that can be answered by code execution should in some "
         "way be answered by this agent."
     ),
@@ -181,46 +181,70 @@ def execute_terminal(session_id: str, command: str) -> dict[str, Any]:
 
 
 @mcp.tool()
-def upload_file(
+def import_files(
     session_id: str,
-    file_name: str,
-    file_content: str,
-    encoding: str = "text",
+    files: list[dict[str, str]],
 ) -> dict[str, Any]:
-    """Uploads a file into the sandbox's /workspace/ directory.
+    """Imports files or directories into the sandbox's /workspace/ directory.
 
-    Since MCP clients don't share a filesystem with the server, the file
-    content is sent directly (as text or base64-encoded binary).
+    Since MCP clients don't share a filesystem with the server, each file
+    entry can provide content directly (as text or base64-encoded binary) via
+    "file_content" and "encoding" keys, OR a host path via "source".
 
     Args:
         session_id: ID returned by create_session.
-        file_name: Name for the file inside the sandbox (e.g. "data.csv").
-        file_content: The file content as a string.
-        encoding: "text" for plain text content (default), or "base64" for
-            base64-encoded binary content.
+        files: List of file objects. Each object must have:
+            - For inline content: "file_name" (str), "file_content" (str),
+              and optionally "encoding" ("text" or "base64", default "text").
+            - For host paths: "source" (host path) and optionally
+              "destination" (name in sandbox, defaults to source filename).
+            Examples:
+              [{"file_name": "data.csv", "file_content": "a,b\\n1,2"}]
+              [{"source": "/tmp/report.pdf", "destination": "report.pdf"}]
 
     Returns:
-        JSON with remote_path and size.
+        JSON with per-file results (source, destination, success, size, error).
     """
     manager = _get_manager()
-    try:
-        with tempfile.NamedTemporaryFile(delete=False, suffix=f"_{file_name}") as tmp:
-            if encoding == "base64":
-                tmp.write(base64.b64decode(file_content))
-            else:
-                tmp.write(file_content.encode("utf-8"))
-            tmp_path = Path(tmp.name)
+    tmp_paths: list[Path] = []
+    resolved_files: list[dict[str, str]] = []
 
-        result = manager.upload_file(session_id, str(tmp_path), file_name)
+    try:
+        for entry in files:
+            if "file_content" in entry:
+                fname = entry.get("file_name", "file")
+                encoding = entry.get("encoding", "text")
+                with tempfile.NamedTemporaryFile(
+                    delete=False, suffix=f"_{fname}"
+                ) as tmp:
+                    if encoding == "base64":
+                        tmp.write(base64.b64decode(entry["file_content"]))
+                    else:
+                        tmp.write(entry["file_content"].encode("utf-8"))
+                    tmp_paths.append(Path(tmp.name))
+                resolved_files.append({
+                    "source": str(tmp_paths[-1]),
+                    "destination": fname,
+                })
+            else:
+                resolved_files.append({
+                    "source": entry.get("source", ""),
+                    "destination": entry.get("destination", ""),
+                })
+
+        from dataclasses import asdict
+
+        result = manager.import_files(session_id, resolved_files)
     except Exception as exc:
         return _error_payload(manager, exc)
     finally:
-        try:
-            tmp_path.unlink(missing_ok=True)
-        except Exception:
-            pass
+        for p in tmp_paths:
+            try:
+                p.unlink(missing_ok=True)
+            except Exception:
+                pass
 
-    return result
+    return asdict(result)
 
 
 @mcp.tool()

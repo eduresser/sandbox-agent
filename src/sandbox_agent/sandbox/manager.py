@@ -26,6 +26,8 @@ from sandbox_agent.sandbox.models import (
     ExecutionResult,
     ExportFileResult,
     ExportResult,
+    ImportFileResult,
+    ImportResult,
     SessionInfo,
     TerminalResult,
     truncate_field,
@@ -376,45 +378,100 @@ class SandboxManager:
         raw_stderr = (output[1] or b"").decode(errors="replace")
         info.stderr = truncate_field(raw_stderr, get_settings().MAX_STDERR_CHARS)
 
-    def upload_file(
+    def import_files(
         self,
         session_id: str,
-        local_path: str | Path,
-        remote_name: str | None = None,
-    ) -> dict:
+        files: list[dict[str, str]],
+    ) -> ImportResult:
+        """Copy files or directories from the host into the sandbox.
+
+        Args:
+            session_id: Active session ID.
+            files: List of ``{"source": "<host path>", "destination": "<container path>"}``
+                mappings.  *destination* is relative to ``/workspace/`` when not
+                absolute.  If *destination* is omitted, the original file/folder
+                name is used.
+
+        Returns:
+            ImportResult with per-file status.
+        """
         self._check_session(session_id)
         self._assert_container_alive(session_id)
         info = self.sessions[session_id]
-        local_path = Path(local_path)
 
-        if not local_path.exists():
-            raise FileNotFoundError(f"File not found: {local_path}")
+        results: list[ImportFileResult] = []
+        all_ok = True
 
-        if remote_name is None:
-            remote_name = local_path.name
+        for entry in files:
+            src = entry.get("source", "")
+            dst = entry.get("destination", "")
 
-        tar_buf = io.BytesIO()
-        with tarfile.open(fileobj=tar_buf, mode="w") as tar:
-            tar.add(str(local_path), arcname=remote_name)
-        tar_buf.seek(0)
+            if not src:
+                results.append(ImportFileResult(
+                    source=src, destination=dst, success=False,
+                    error="source is required",
+                ))
+                all_ok = False
+                continue
 
-        result = subprocess.run(
-            ["docker", "exec", "-i", info.container_name, "tar", "xf", "-", "-C", "/workspace"],
-            input=tar_buf.read(),
-            capture_output=True,
-            timeout=60,
-        )
+            local_path = Path(src)
+            if not local_path.exists():
+                results.append(ImportFileResult(
+                    source=src, destination=dst, success=False,
+                    error=f"File or directory not found: {local_path}",
+                ))
+                all_ok = False
+                continue
 
-        if result.returncode != 0:
-            raise RuntimeError(
-                f"Failed to upload file: {result.stderr.decode(errors='replace')[:500]}"
-            )
+            if not dst:
+                dst = local_path.name
 
-        return {
-            "success": True,
-            "remote_path": f"/workspace/{remote_name}",
-            "size": local_path.stat().st_size,
-        }
+            remote_path = dst if dst.startswith("/") else f"/workspace/{dst}"
+
+            try:
+                if local_path.is_file():
+                    size = local_path.stat().st_size
+                else:
+                    size = sum(f.stat().st_size for f in local_path.rglob("*") if f.is_file())
+
+                tar_buf = io.BytesIO()
+                with tarfile.open(fileobj=tar_buf, mode="w") as tar:
+                    tar.add(str(local_path), arcname=Path(remote_path).name)
+                tar_buf.seek(0)
+
+                dest_dir = str(Path(remote_path).parent)
+                proc = subprocess.run(
+                    [
+                        "docker", "exec", "-i", info.container_name,
+                        "tar", "xf", "-", "-C", dest_dir,
+                    ],
+                    input=tar_buf.read(),
+                    capture_output=True,
+                    timeout=120,
+                )
+
+                if proc.returncode != 0:
+                    err = proc.stderr.decode(errors="replace")[:500]
+                    results.append(ImportFileResult(
+                        source=src, destination=remote_path, success=False,
+                        error=f"tar extract failed: {err}",
+                    ))
+                    all_ok = False
+                    continue
+
+                results.append(ImportFileResult(
+                    source=src, destination=remote_path,
+                    success=True, size=size,
+                ))
+
+            except Exception as exc:
+                results.append(ImportFileResult(
+                    source=src, destination=remote_path, success=False,
+                    error=f"{type(exc).__name__}: {exc}",
+                ))
+                all_ok = False
+
+        return ImportResult(success=all_ok, files=results)
 
     def export_files(
         self,

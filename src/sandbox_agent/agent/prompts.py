@@ -129,8 +129,8 @@ Examples of requests that SHOULD trigger code:
   - CONTAINER_DIED (sandbox container crashed):
     → The container is gone. Call stop_session, then create_session to get a
       fresh one. BEFORE re-running code, diagnose WHY it crashed:
-      1. Did you forget to upload_file to THIS session? (each session has its
-         own filesystem — files uploaded to another session are NOT available)
+      1. Did you forget to import_files to THIS session? (each session has its
+         own filesystem — files imported to another session are NOT available)
       2. Did the code exhaust memory (OOM)?
       3. Did the code use callback-based async that might throw unhandled errors?
       Fix the root cause BEFORE creating the new session.
@@ -392,25 +392,25 @@ PHASE 5 — LAST RESORT ONLY:
   Each sandbox is a Docker container with its OWN, INDEPENDENT filesystem.
   - execute_code and execute_terminal run INSIDE the container, so they cannot
     see host paths like /home/... directly.
-  - upload_file is the bridge IN: it copies a file FROM the host INTO the
-    container. You have full access to host file paths via upload_file.
+  - import_files is the bridge IN: it copies files and directories FROM the
+    host INTO the container. You have full access to host file paths.
   - export_files is the bridge OUT: it copies files FROM the container TO the
     host. Use it to deliver results to the user or persist artifacts.
-  - When the user mentions any file path, you MUST use upload_file to copy it
+  - When the user mentions any file path, you MUST use import_files to copy it
     into the sandbox, then reference it as /workspace/<filename>.
   - ALL tools require a valid session_id. Use an existing session when available.
 
   CRITICAL — SESSIONS DO NOT SHARE FILES:
   - Each session_id maps to a SEPARATE Docker container with its own /workspace.
-  - Files uploaded to session A are NOT visible from session B.
+  - Files imported to session A are NOT visible from session B.
   - If you need the same file in two sessions (e.g., one Python and one R),
-    you MUST call upload_file ONCE FOR EACH session_id.
+    you MUST call import_files ONCE FOR EACH session_id.
   - This is the #1 cause of "file not found" errors when using multiple sessions.
 
   CROSS-SESSION FILE TRANSFER:
   - To move files from session A to session B:
     1. export_files from session A — note the "destination" paths in the result
-    2. upload_file into session B using the exported "destination" as local_path
+    2. import_files into session B using the exported "destination" as source
   - This is the ONLY way to share files between sessions.
 </isolation>
 
@@ -525,16 +525,31 @@ PHASE 5 — LAST RESORT ONLY:
     Remember: only /workspace and system paths exist, NOT host paths.
   </tool>
 
-  <tool name="upload_file">
-    Copies a file from the host machine into the sandbox (/workspace/).
-    YOU have access to all host paths through this tool.
-    <param name="local_path">Full path on the host (e.g. "/home/user/data.csv").</param>
-    After upload, the file is at /workspace/<filename> inside the container.
+  <tool name="import_files">
+    Copies one or more files or directories from the host machine into the
+    sandbox (/workspace/). YOU have access to all host paths through this tool.
+    <param name="session_id">ID returned by create_session.</param>
+    <param name="files">
+      List of objects with "source" and "destination" keys.
+      - source: Full path on the host (e.g. "/home/user/data.csv" or
+        "/home/user/project/" for a directory).
+      - destination: Name or path inside the sandbox (relative to /workspace/
+        or absolute). Defaults to the original file/folder name.
+      Example: [{"source": "/home/user/data.csv", "destination": "data.csv"},
+                {"source": "/home/user/assets/", "destination": "assets/"}]
+    </param>
+    <returns>
+      JSON with per-file results (source, destination, success, size, error).
+    </returns>
+    <important>
+      After import, files are at /workspace/<destination> inside the container.
+      You can import entire directories — the full tree is preserved.
+    </important>
   </tool>
 
   <tool name="export_files">
     Exports one or more files or directories FROM the sandbox TO the host machine.
-    This is the reverse of upload_file: it copies results out of the container.
+    This is the reverse of import_files: it copies results out of the container.
     Files are saved to OUTPUT_DIR/<session_id>/<destination> by default.
     <param name="session_id">ID returned by create_session.</param>
     <param name="files">
@@ -549,7 +564,7 @@ PHASE 5 — LAST RESORT ONLY:
     <returns>
       JSON with per-file results including "source" (container path) and
       "destination" (absolute host path). The destination paths can be used
-      as local_path in upload_file to transfer files to another session.
+      as "source" in import_files to transfer files to another session.
     </returns>
     <use_cases>
       USE THIS TOOL WHENEVER:
@@ -558,7 +573,7 @@ PHASE 5 — LAST RESORT ONLY:
          artifacts so the user can access them on their machine.
       2. CROSS-SESSION TRANSFER — You need to move files between two sandbox
          sessions (e.g., Python session produced data, R session needs it).
-         Export from session A, then upload_file the exported path into session B.
+         Export from session A, then import_files the exported path into session B.
       3. PERSISTING ARTIFACTS — The sandbox is ephemeral (tmpfs). If you want
          files to survive after stop_session, export them first.
       4. BATCH EXPORT — You can export multiple files and directories in a
@@ -571,7 +586,7 @@ PHASE 5 — LAST RESORT ONLY:
       - When the user asks you to "save", "generate", "create a file", or
         "send me the result", use export_files to make the output accessible.
       - For cross-session transfers: the returned "destination" paths are absolute
-        host paths that you can directly pass to upload_file's local_path parameter.
+        host paths that you can directly pass to import_files as "source".
     </important>
   </tool>
 
@@ -596,8 +611,8 @@ PHASE 5 — LAST RESORT ONLY:
      including more than you think you need — especially purpose-built
      libraries for the task domain).
      Save the session_id — every other tool needs it.
-  2. upload_file — if the user references any file, upload it using the
-     session_id from step 1. Use the host path as local_path.
+  2. import_files — if the user references any file or directory, import it
+     using the session_id from step 1. Pass the host path as "source".
   3. execute_code — work with uploaded files at /workspace/<filename>.
      Always import modules first. Variables persist between calls.
      START with self-sufficient approaches (Level 1) — see
@@ -782,9 +797,9 @@ PHASE 5 — LAST RESORT ONLY:
     by combining successful data with supplementary sources (e.g., convert
     currencies using exchange rate data obtained separately).
   - When the user mentions a file path, ALWAYS upload it yourself using
-    upload_file. You CAN access host files — just use upload_file with the
-    host path, then work with /workspace/<filename> in execute_code.
-    NEVER ask the user to upload files manually.
+    import_files. You CAN access host files — just use import_files with the
+    host path as "source", then work with /workspace/<filename> in execute_code.
+    NEVER ask the user to import files manually.
   - Inside execute_code, use /workspace/<filename> to reference uploaded files.
   - If a tool returns an error with "active_sessions", use one of those
     session_ids if the runtime matches — do not create a new session.
@@ -809,7 +824,7 @@ PHASE 5 — LAST RESORT ONLY:
   - ALWAYS export_files BEFORE stop_session. The sandbox filesystem is
     ephemeral — once stopped, all data is permanently lost.
   - For cross-session file transfers, use export_files from the source session
-    and then upload_file the exported path into the target session.
+    and then import_files the exported path into the target session.
   - Always end the session with stop_session when finished.
   - ALWAYS present your solution with justification and alternatives considered
     (see <solution_presentation>).

@@ -13,10 +13,11 @@ LangGraph agent with Docker-based sandboxed code execution. Each session runs in
 - **Vision support** — auto-detects multimodal LLMs and sends matplotlib/ggplot figures as base64 PNG images
 - **Provider-agnostic** — works with OpenAI, Anthropic, or any compatible provider via `langchain-openai` init
 - **Runtime package install** — `pip install` / `npm install` / `install.packages()` / `Pkg.add()` at session creation or via terminal
-- **6 tools** — create_session, execute_code, execute_terminal, upload_file, export_files, stop_session
+- **6 tools** — create_session, execute_code, execute_terminal, import_files, export_files, stop_session
 - **MCP server** — expose the same tools via Model Context Protocol (stdio transport)
 - **File export** — export files and directories from sandboxes to the host, organized by session (`OUTPUT_DIR/<session_id>/`)
-- **Cross-session transfer** — export from one session and upload into another using the returned host paths
+- **File import** — import files and directories from the host into sandboxes, including entire folder trees
+- **Cross-session transfer** — export from one session and import into another using the returned host paths
 - **Auto-cleanup** — all containers are stopped and removed when the agent exits
 
 ## Prerequisites
@@ -89,7 +90,7 @@ Add to the Claude Desktop MCP config:
 }
 ```
 
-The MCP server exposes the same 6 tools as the CLI agent. The `upload_file` tool accepts file content directly (as text or base64) since MCP clients don't share a filesystem with the server. The `export_files` tool accepts an optional `output_dir` override.
+The MCP server exposes the same 6 tools as the CLI agent. The `import_files` tool accepts file content directly (as text or base64 via `file_content`/`encoding` keys) or host paths (via `source`/`destination` keys), since MCP clients don't always share a filesystem with the server. The `export_files` tool accepts an optional `output_dir` override.
 
 ### Programmatic
 
@@ -154,7 +155,7 @@ for f in result.files:
 
 #### Cross-Session File Transfer
 
-Use `export_files` + `upload_file` to move files between sessions:
+Use `export_files` + `import_files` to move files between sessions:
 
 ```python
 # Session A (Python): produce data
@@ -169,8 +170,30 @@ host_path = export.files[0].destination  # absolute path on host
 
 # Session B (R): consume the same data
 sid_b = manager.create_session(runtime="r", dependencies={"readr": ""}).session_id
-manager.upload_file(sid_b, host_path, "data.csv")
+manager.import_files(sid_b, [{"source": host_path, "destination": "data.csv"}])
 manager.execute_code(sid_b, 'df <- readr::read_csv("/workspace/data.csv"); summary(df)')
+```
+
+#### Importing Files and Directories
+
+`import_files` copies files and directories from the host into the sandbox:
+
+```python
+# Import a single file
+result = manager.import_files(sid, [
+    {"source": "/home/user/data.csv", "destination": "data.csv"},
+])
+
+# Import an entire directory (tree is preserved)
+result = manager.import_files(sid, [
+    {"source": "/home/user/project/", "destination": "project/"},
+])
+
+# Import multiple items at once
+result = manager.import_files(sid, [
+    {"source": "/home/user/config.json", "destination": "config.json"},
+    {"source": "/home/user/assets/", "destination": "assets/"},
+])
 ```
 
 Other runtimes work the same way — pass `runtime="node"`, `runtime="r"`, or `runtime="julia"` to `create_session`.
