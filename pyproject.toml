@@ -19,9 +19,16 @@ dependencies = [
     "aegra-cli>=0.6.0",
 ]
 
+[project.optional-dependencies]
+frontend = [
+    "streamlit>=1.41.0",
+    "httpx>=0.27.0",
+]
+
 [project.scripts]
 sandbox-agent = "sandbox_agent.cli:main"
 sandbox-agent-mcp = "sandbox_agent.mcp_server:main"
+sandbox-agent-frontend = "sandbox_agent.frontend_runner:main"
 
 [dependency-groups]
 dev = [

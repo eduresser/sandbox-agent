@@ -61,24 +61,9 @@ Run the MCP server (stdio transport) for integration with Cursor, Claude Desktop
 uv run sandbox-agent-mcp
 ```
 
-#### Cursor
+#### Claude Desktop or Cursor
 
-Add to `~/.cursor/mcp.json`:
-
-```json
-{
-  "mcpServers": {
-    "sandbox-agent": {
-      "command": "uv",
-      "args": ["--directory", "/path/to/sandbox-agent", "run", "sandbox-agent-mcp"]
-    }
-  }
-}
-```
-
-#### Claude Desktop
-
-Add to the Claude Desktop MCP config:
+Add the following MCP config:
 
 ```json
 {
@@ -103,6 +88,20 @@ uv run aegra dev
 ```
 
 The server runs at `http://localhost:8000` with OpenAPI docs at `/docs`. Use the LangGraph SDK or curl to create assistants, threads, and stream runs. Compatible with Agent Chat UI, LangGraph Studio, and CopilotKit.
+
+### Streamlit Frontend
+
+A web UI for chatting with the agent via the Aegra API:
+
+```bash
+# Install frontend dependencies (streamlit, httpx)
+uv sync --extra frontend
+
+# Start the frontend (requires Aegra running: uv run aegra dev)
+uv run sandbox-agent-frontend
+```
+
+The frontend runs at `http://localhost:8501`.
 
 ### Programmatic
 

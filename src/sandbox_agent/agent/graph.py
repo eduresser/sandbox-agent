@@ -6,6 +6,7 @@ import json
 import logging
 from typing import Any
 
+from langchain.chat_models import init_chat_model
 from langchain_core.language_models import BaseChatModel
 from langchain_core.messages import AIMessage, SystemMessage, ToolMessage
 from langchain_core.runnables import RunnableConfig
@@ -136,10 +137,48 @@ def build_agent(
         finally:
             current_thread_id.reset(token)
 
-    def call_model(state: AgentState) -> dict[str, Any]:
+    _override_cache: dict[str, BaseChatModel] = {}
+
+    def _get_llm_for_config(config: RunnableConfig) -> BaseChatModel:
+        """Return an LLM bound with tools, using overrides from configurable if present."""
+        configurable = (config.get("configurable") or {})
+        model = configurable.get("chat_model")
+        provider = configurable.get("chat_model_provider")
+        api_key = configurable.get("chat_model_api_key")
+
+        if not model and not provider and not api_key:
+            return llm_with_tools
+
+        base_url = configurable.get("chat_model_base_url") or settings.CHAT_MODEL_BASE_URL
+        effective_key = api_key or settings.CHAT_MODEL_API_KEY
+        cache_key = (
+            f"{model or settings.CHAT_MODEL}"
+            f"|{provider or settings.CHAT_MODEL_PROVIDER}"
+            f"|{hash(effective_key)}"
+            f"|{base_url or ''}"
+        )
+        if cache_key in _override_cache:
+            return _override_cache[cache_key]
+
+        kwargs: dict[str, Any] = {
+            "model": model or settings.CHAT_MODEL,
+            "model_provider": provider or settings.CHAT_MODEL_PROVIDER,
+        }
+        if base_url:
+            kwargs["base_url"] = base_url
+        if effective_key:
+            kwargs["api_key"] = effective_key
+
+        override = init_chat_model(**kwargs).bind_tools(tools)
+        _override_cache[cache_key] = override
+        return override
+
+    def call_model(state: AgentState, config: RunnableConfig) -> dict[str, Any]:
         messages = state["messages"]
         if not messages or not isinstance(messages[0], SystemMessage):
             messages = [SystemMessage(content=SYSTEM_PROMPT), *messages]
+
+        active_llm = _get_llm_for_config(config)
 
         has_images = any(
             isinstance(m, ToolMessage) and isinstance(m.content, list)
@@ -151,7 +190,7 @@ def build_agent(
             has_images = False
 
         try:
-            response = llm_with_tools.invoke(messages)
+            response = active_llm.invoke(messages)
         except Exception as exc:
             if has_images:
                 logger.info(
@@ -160,7 +199,7 @@ def build_agent(
                 )
                 vision_state["supported"] = False
                 messages = _strip_images_from_messages(messages)
-                response = llm_with_tools.invoke(messages)
+                response = active_llm.invoke(messages)
             else:
                 raise
 
