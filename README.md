@@ -249,8 +249,8 @@ All settings can be overridden via environment variables or `.env`:
 # LLM (provider-agnostic)
 CHAT_MODEL=gpt-4o                    # Model name
 CHAT_MODEL_PROVIDER=openai           # Provider (openai, anthropic, etc.)
-CHAT_MODEL_BASE_URL=...              # Custom API base URL (optional)
 CHAT_MODEL_API_KEY=sk-...            # API key (required)
+CHAT_MODEL_BASE_URL=                 # Custom API base URL (optional)
 CHAT_MODEL_SUPPORTS_VISION=          # Override vision detection (true/false, empty = auto)
 
 # Container limits

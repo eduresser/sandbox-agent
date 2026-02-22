@@ -21,8 +21,9 @@ class Settings(BaseSettings):
     # ── LLM (provider-agnostic) ──
     CHAT_MODEL: str = "gpt-4o"
     CHAT_MODEL_PROVIDER: str = "openai"
-    CHAT_MODEL_BASE_URL: str | None = None
     CHAT_MODEL_API_KEY: str
+    CHAT_MODEL_BASE_URL: str | None = None
+    CHAT_MODEL_SUPPORTS_VISION: bool | None = None
 
     # ── Container ──
     CONTAINER_MEMORY_LIMIT: str = "2048m"
@@ -32,10 +33,6 @@ class Settings(BaseSettings):
     EXECUTION_TIMEOUT_SECONDS: int = 30
     MAX_SESSIONS: int = 5
     TERMINAL_ROOT: bool = False
-
-    # ── Vision ──
-    # None = auto-detect via try-with-fallback; True/False = explicit override
-    CHAT_MODEL_SUPPORTS_VISION: bool | None = None
 
     # ── Output Limits (characters) ──
     MAX_STDOUT_CHARS: int = 20_000
