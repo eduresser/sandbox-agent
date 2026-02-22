@@ -197,7 +197,7 @@ flowchart LR
         KP["PID 1: kernel_python.py"]
         IPython["IPython Shell (persistent state)"]
         SockP["/tmp/kernel.sock"]
-        ClientP["client.py (ephemeral)"]
+        ClientP["client_python.py (ephemeral)"]
 
         KP --- IPython
         KP --- SockP
@@ -208,7 +208,7 @@ flowchart LR
         KN["PID 1: kernel_node.js"]
         VM["vm.createContext (persistent state)"]
         SockN["/tmp/kernel.sock"]
-        ClientN["client.js (ephemeral)"]
+        ClientN["client_node.js (ephemeral)"]
 
         KN --- VM
         KN --- SockN

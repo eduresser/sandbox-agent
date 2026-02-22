@@ -4,16 +4,16 @@ FROM julia:1.11-bookworm
 # container (same rationale as the R image).
 ENV OPENBLAS_NUM_THREADS=1
 
-COPY kernel/client.jl.c /tmp/client.jl.c
+COPY client/client_c.c /tmp/client_c.c
 
-# Compile the C client and strip build tools to keep the image lean.
+# Compile the unified C client and strip build tools to keep the image lean.
 # A C binary (<1 MB) avoids the ~300 MB overhead of spawning a full
 # Julia process for every execute_code call.
 RUN apt-get update \
     && apt-get install -y --no-install-recommends gcc libc6-dev \
-    && mkdir -p /kernel \
-    && gcc -O2 -static -o /kernel/client_julia /tmp/client.jl.c \
-    && rm /tmp/client.jl.c \
+    && mkdir -p /kernel /client \
+    && gcc -O2 -static -o /client/client_c /tmp/client_c.c \
+    && rm /tmp/client_c.c \
     && apt-get purge -y --auto-remove gcc libc6-dev \
     && rm -rf /var/lib/apt/lists/*
 
@@ -30,6 +30,8 @@ RUN groupadd -g 65532 sandbox \
     && chown sandbox:sandbox /workspace /usr/local/julia/user-depot
 
 COPY kernel/kernel_julia.jl /kernel/kernel_julia.jl
+
+ENV KERNEL_PORT=8765
 
 # User depot lives on the rootfs (not tmpfs) so precompiled .so files
 # can be mmap'd. Docker mounts /home/sandbox as tmpfs with noexec,

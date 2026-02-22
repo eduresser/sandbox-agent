@@ -6,7 +6,7 @@ RUN groupadd -g 65532 sandbox \
     && chown sandbox:sandbox /workspace
 
 COPY kernel/kernel_node.js /kernel/kernel_node.js
-COPY kernel/client.js /kernel/client.js
+COPY client/client_node.js /client/client_node.js
 
 WORKDIR /workspace
 USER sandbox

@@ -18,7 +18,7 @@ RUN pip install --no-cache-dir ipython \
     && chown sandbox:sandbox /workspace
 
 COPY kernel/kernel_python.py /kernel/kernel_python.py
-COPY kernel/client.py /kernel/client.py
+COPY client/client_python.py /client/client_python.py
 
 ENV PYTHONUSERBASE=/home/sandbox/.local
 ENV PATH="/home/sandbox/.local/bin:${PATH}"

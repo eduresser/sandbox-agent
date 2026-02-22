@@ -1,12 +1,10 @@
 using Sockets
 using JSON3
 
-const SOCKET_PATH = "/tmp/kernel.sock"
+const LISTEN_PORT = 8765
 const MAX_OUTPUT  = 2 * 1024 * 1024
 
 cd("/workspace")
-
-ispath(SOCKET_PATH) && rm(SOCKET_PATH)
 
 # ── Persistent User Module ──────────────────────────────
 
@@ -177,10 +175,9 @@ function handle_request(raw::String)
     )
 end
 
-# ── UNIX Socket Server ─────────────────────────────────
+# ── TCP Socket Server (same as R; PipeEndpoint/Unix has half-close issues) ─
 
-server = listen(SOCKET_PATH)
-chmod(SOCKET_PATH, 0o777)
+server = listen(parse(Int, get(ENV, "KERNEL_PORT", "8765")))
 
 println("KERNEL_READY")
 flush(stdout)
@@ -195,9 +192,17 @@ while true
     end
 
     try
-        data = readline(conn)
+        # Read until EOF (client_c uses half-close).
+        chunks = UInt8[]
+        while true
+            chunk = read(conn, 65536)
+            isempty(chunk) && break
+            append!(chunks, chunk)
+        end
+        data = String(chunks)
         result = handle_request(data)
-        println(conn, JSON3.write(result))
+        write(conn, JSON3.write(result))
+        flush(conn)
     catch e
         try
             err_resp = Dict{String,Any}(
@@ -207,7 +212,8 @@ while true
                     "message" => sprint(showerror, e),
                 ),
             )
-            println(conn, JSON3.write(err_resp))
+            write(conn, JSON3.write(err_resp))
+            flush(conn)
         catch
         end
     finally

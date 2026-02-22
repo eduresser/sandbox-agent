@@ -32,21 +32,21 @@ RUNTIME_CONFIG: dict[str, dict[str, Any]] = {
     "python": {
         "image": "sandbox-python:latest",
         "dockerfile": "Dockerfile.python",
-        "client_cmd": ["python", "/kernel/client.py"],
+        "client_cmd": ["python", "/client/client_python.py"],
         "install_cmd": lambda pkgs: ["pip", "install", "--no-cache-dir", *pkgs],
         "install_user": "root",
     },
     "node": {
         "image": "sandbox-node:latest",
         "dockerfile": "Dockerfile.node",
-        "client_cmd": ["node", "/kernel/client.js"],
+        "client_cmd": ["node", "/client/client_node.js"],
         "install_cmd": lambda pkgs: ["npm", "install", "--save", *pkgs],
         "install_user": None,
     },
     "r": {
         "image": "sandbox-r:latest",
         "dockerfile": "Dockerfile.r",
-        "client_cmd": ["/kernel/client_r"],
+        "client_cmd": ["/client/client_c"],
         "install_cmd": lambda pkgs: [
             "Rscript", "-e",
             "install.packages(c("
@@ -58,7 +58,7 @@ RUNTIME_CONFIG: dict[str, dict[str, Any]] = {
     "julia": {
         "image": "sandbox-julia:latest",
         "dockerfile": "Dockerfile.julia",
-        "client_cmd": ["/kernel/client_julia"],
+        "client_cmd": ["/client/client_c"],
         "install_cmd": lambda pkgs: [
             "sh", "-c",
             "JULIA_DEPOT_PATH=/opt/julia-depot JULIA_NUM_PRECOMPILE_PARALLEL=1 "

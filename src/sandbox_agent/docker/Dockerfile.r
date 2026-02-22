@@ -9,16 +9,16 @@ ENV OPENBLAS_NUM_THREADS=1
 # (Noble), so install.packages() gets fast pre-compiled binaries that
 # match the system libraries.
 
-COPY kernel/client.r.c /tmp/client.r.c
+COPY client/client_c.c /tmp/client_c.c
 
-# Compile the C client and install base R packages, then strip build
+# Compile the unified C client and install base R packages, then strip build
 # tools to keep the image lean. Additional system libraries can be
 # installed at runtime via execute_terminal when TERMINAL_ROOT=true.
 RUN apt-get update \
     && apt-get install -y --no-install-recommends gcc libc6-dev \
-    && mkdir -p /kernel \
-    && gcc -O2 -static -o /kernel/client_r /tmp/client.r.c \
-    && rm /tmp/client.r.c \
+    && mkdir -p /kernel /client \
+    && gcc -O2 -static -o /client/client_c /tmp/client_c.c \
+    && rm /tmp/client_c.c \
     && Rscript -e "install.packages(c('jsonlite', 'base64enc'), Ncpus=4)" \
     && apt-mark manual make libgomp1 \
     && apt-get purge -y --auto-remove gcc libc6-dev \
@@ -30,6 +30,8 @@ RUN groupadd -g 65532 sandbox \
     && chown sandbox:sandbox /workspace /usr/local/lib/R/user-library
 
 COPY kernel/kernel_r.R /kernel/kernel_r.R
+
+ENV KERNEL_PORT=8765
 
 # R packages live on the rootfs (not tmpfs) so shared objects can be loaded.
 # Docker mounts /home/sandbox as tmpfs with noexec, which breaks dyn.load().
