@@ -15,6 +15,7 @@ from rich.syntax import Syntax
 from rich.text import Text
 
 from sandbox_agent.agent.graph import build_agent
+from sandbox_agent.clients import get_checkpointer
 from sandbox_agent.sandbox.manager import SandboxManager
 from sandbox_agent.settings import get_settings
 
@@ -113,8 +114,8 @@ def _format_tool_output(msg: ToolMessage) -> Panel:
 def main() -> None:
     """Entry point for the ``sandbox-agent`` CLI command."""
     console = Console()
-    settings = get_settings()
 
+    settings = get_settings()
     if not settings.CHAT_MODEL_API_KEY:
         console.print(
             Panel(
@@ -126,6 +127,8 @@ def main() -> None:
             )
         )
         sys.exit(1)
+
+    checkpointer = get_checkpointer()
 
     try:
         manager = SandboxManager()
@@ -155,7 +158,7 @@ def main() -> None:
             )
         sys.exit(1)
 
-    app = build_agent(manager=manager)
+    app = build_agent(manager=manager, checkpointer=checkpointer)
 
     console.print()
     console.print(
@@ -189,17 +192,28 @@ def main() -> None:
                 console.print("[dim]Goodbye![/dim]")
                 break
 
-            messages.append(HumanMessage(content=user_input))
+            new_msg = HumanMessage(content=user_input)
+            if not checkpointer:
+                messages.append(new_msg)
+
             console.print()
 
             final_ai_content = ""
 
             try:
-                displayed_count = len(messages)
+                config: dict[str, Any] = {"recursion_limit": settings.MAX_ITERATIONS}
+                if checkpointer:
+                    config["configurable"] = {"thread_id": "cli"}
+                    input_messages = [new_msg]
+                    state_before = app.get_state(config)
+                    displayed_count = len(state_before.values.get("messages", []))
+                else:
+                    input_messages = messages
+                    displayed_count = len(messages)
 
                 for state_snapshot in app.stream(
-                    {"messages": messages},
-                    config={"recursion_limit": settings.MAX_ITERATIONS},
+                    {"messages": input_messages},
+                    config=config,
                     stream_mode="values",
                 ):
                     all_msgs = state_snapshot.get("messages", [])
@@ -218,7 +232,8 @@ def main() -> None:
                         if isinstance(msg, AIMessage) and msg.content:
                             final_ai_content = msg.content
 
-                messages = all_msgs  # noqa: F821
+                if not checkpointer:
+                    messages = all_msgs
 
             except Exception as exc:
                 console.print(

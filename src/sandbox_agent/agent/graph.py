@@ -76,12 +76,15 @@ def build_agent(
     *,
     manager: SandboxManager | None = None,
     llm: BaseChatModel | None = None,
+    checkpointer: Any = None,
 ) -> Any:
     """Build and compile the LangGraph agent.
 
     Args:
         manager: Shared SandboxManager instance. If ``None``, creates one.
         llm: LLM instance. If ``None``, uses the cached model from clients.
+        checkpointer: Optional checkpointer for persistence (e.g. SqliteSaver).
+            When provided, use ``config={"configurable": {"thread_id": "..."}}`` on invoke/stream.
 
     Returns:
         Compiled LangGraph ``CompiledGraph`` ready to ``.invoke()`` or ``.stream()``.
@@ -179,4 +182,4 @@ def build_agent(
     )
     graph.add_edge("tools", "agent")
 
-    return graph.compile()
+    return graph.compile(checkpointer=checkpointer)

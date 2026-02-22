@@ -46,6 +46,9 @@ class Settings(BaseSettings):
     # ── Agent ──
     MAX_ITERATIONS: int = 25
 
+    # ── Checkpointer (SQLite) ──
+    CHECKPOINT_DB_PATH: str | None = None
+
 
 @lru_cache(maxsize=1)
 def get_settings() -> Settings:
