@@ -186,7 +186,6 @@ def build_agent(
 
 
 # ── Aegra / LangGraph Platform ─────────────────────────────────────────────
-# Factory for server deployment. The server injects checkpointer at runtime.
 _manager: SandboxManager | None = None
 
 
@@ -197,6 +196,4 @@ def _get_manager() -> SandboxManager:
     return _manager
 
 
-def graph(config: Any = None):
-    """Factory for Aegra/LangGraph Platform. Server injects checkpointer at runtime."""
-    return build_agent(manager=_get_manager(), checkpointer=None)
+graph = build_agent(manager=_get_manager(), checkpointer=None)
