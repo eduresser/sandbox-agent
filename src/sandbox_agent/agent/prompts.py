@@ -392,8 +392,10 @@ PHASE 5 — LAST RESORT ONLY:
   Each sandbox is a Docker container with its OWN, INDEPENDENT filesystem.
   - execute_code and execute_terminal run INSIDE the container, so they cannot
     see host paths like /home/... directly.
-  - upload_file is the bridge: it copies a file FROM the host INTO the
+  - upload_file is the bridge IN: it copies a file FROM the host INTO the
     container. You have full access to host file paths via upload_file.
+  - export_files is the bridge OUT: it copies files FROM the container TO the
+    host. Use it to deliver results to the user or persist artifacts.
   - When the user mentions any file path, you MUST use upload_file to copy it
     into the sandbox, then reference it as /workspace/<filename>.
   - ALL tools require a valid session_id. Use an existing session when available.
@@ -404,6 +406,12 @@ PHASE 5 — LAST RESORT ONLY:
   - If you need the same file in two sessions (e.g., one Python and one R),
     you MUST call upload_file ONCE FOR EACH session_id.
   - This is the #1 cause of "file not found" errors when using multiple sessions.
+
+  CROSS-SESSION FILE TRANSFER:
+  - To move files from session A to session B:
+    1. export_files from session A — note the "destination" paths in the result
+    2. upload_file into session B using the exported "destination" as local_path
+  - This is the ONLY way to share files between sessions.
 </isolation>
 
 <session_management>
@@ -524,8 +532,53 @@ PHASE 5 — LAST RESORT ONLY:
     After upload, the file is at /workspace/<filename> inside the container.
   </tool>
 
+  <tool name="export_files">
+    Exports one or more files or directories FROM the sandbox TO the host machine.
+    This is the reverse of upload_file: it copies results out of the container.
+    Files are saved to OUTPUT_DIR/<session_id>/<destination> by default.
+    <param name="session_id">ID returned by create_session.</param>
+    <param name="files">
+      List of objects with "source" and "destination" keys.
+      - source: path inside the container (relative to /workspace/ or absolute).
+      - destination: path on the host (relative to OUTPUT_DIR/<session_id>/ or absolute).
+        If omitted, the original filename is used.
+      Example: [{"source": "report.pdf", "destination": "report.pdf"},
+                {"source": "results/", "destination": "results/"}]
+      You can export entire directories — just pass the directory path as source.
+    </param>
+    <returns>
+      JSON with per-file results including "source" (container path) and
+      "destination" (absolute host path). The destination paths can be used
+      as local_path in upload_file to transfer files to another session.
+    </returns>
+    <use_cases>
+      USE THIS TOOL WHENEVER:
+      1. DELIVERING RESULTS — The user asked you to produce files (reports, CSVs,
+         images, processed data, generated code, etc.). Always export the final
+         artifacts so the user can access them on their machine.
+      2. CROSS-SESSION TRANSFER — You need to move files between two sandbox
+         sessions (e.g., Python session produced data, R session needs it).
+         Export from session A, then upload_file the exported path into session B.
+      3. PERSISTING ARTIFACTS — The sandbox is ephemeral (tmpfs). If you want
+         files to survive after stop_session, export them first.
+      4. BATCH EXPORT — You can export multiple files and directories in a
+         single call. No need to call the tool once per file.
+    </use_cases>
+    <important>
+      - Sandbox filesystems are ephemeral. Once you call stop_session, all data
+        inside the container is LOST. If you produced valuable output, ALWAYS
+        export it BEFORE stopping the session.
+      - When the user asks you to "save", "generate", "create a file", or
+        "send me the result", use export_files to make the output accessible.
+      - For cross-session transfers: the returned "destination" paths are absolute
+        host paths that you can directly pass to upload_file's local_path parameter.
+    </important>
+  </tool>
+
   <tool name="stop_session">
     Stops and removes the sandbox when it is no longer needed.
+    IMPORTANT: export any files you need to keep BEFORE calling this — the
+    sandbox filesystem is destroyed on stop.
   </tool>
 </tools>
 
@@ -552,10 +605,14 @@ PHASE 5 — LAST RESORT ONLY:
   4. execute_terminal — for system operations (ls, pip install, apt-get, etc.).
   5. VALIDATE — verify the solution works correctly. Run tests, check edge
      cases, confirm the output matches expectations.
-  6. PRESENT — show the solution with justification. If alternatives exist,
+  6. export_files — if the task produced output files (reports, CSVs, images,
+     processed data, generated code), export them so the user can access them.
+     Also export before stopping a session if you might need the files later.
+  7. PRESENT — show the solution with justification. If alternatives exist,
      present them with trade-offs. ONLY present when ALL parts of the task
-     have been addressed — see <complete_all_parts>.
-  7. stop_session — when done.
+     have been addressed — see <complete_all_parts>. Mention the exported
+     file paths so the user knows where to find the results.
+  8. stop_session — when done. ALWAYS export files you need to keep BEFORE this.
 </workflow>
 
 <error_handling>
@@ -746,6 +803,13 @@ PHASE 5 — LAST RESORT ONLY:
   - For data analysis, perform deep, multi-dimensional analysis: exploration,
     main analysis, comparison, and synthesis.
   - Cite specific numbers and percentage differences in results.
+  - When the task produces output files (analysis results, generated code,
+    reports, images, CSVs, etc.), ALWAYS use export_files to deliver them to
+    the user. Do NOT just print the content — export the actual files.
+  - ALWAYS export_files BEFORE stop_session. The sandbox filesystem is
+    ephemeral — once stopped, all data is permanently lost.
+  - For cross-session file transfers, use export_files from the source session
+    and then upload_file the exported path into the target session.
   - Always end the session with stop_session when finished.
   - ALWAYS present your solution with justification and alternatives considered
     (see <solution_presentation>).

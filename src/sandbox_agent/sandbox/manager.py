@@ -22,7 +22,14 @@ from typing import Any
 import docker
 import docker.errors
 
-from sandbox_agent.sandbox.models import ExecutionResult, SessionInfo, TerminalResult, truncate_field
+from sandbox_agent.sandbox.models import (
+    ExecutionResult,
+    ExportFileResult,
+    ExportResult,
+    SessionInfo,
+    TerminalResult,
+    truncate_field,
+)
 from sandbox_agent.settings import get_settings
 
 SANDBOX_UID = 65532
@@ -408,6 +415,108 @@ class SandboxManager:
             "remote_path": f"/workspace/{remote_name}",
             "size": local_path.stat().st_size,
         }
+
+    def export_files(
+        self,
+        session_id: str,
+        files: list[dict[str, str]],
+        output_dir: str | Path | None = None,
+    ) -> ExportResult:
+        """Copy files/directories from the sandbox to the host filesystem.
+
+        Args:
+            session_id: Active session ID.
+            files: List of ``{"source": "<container path>", "destination": "<host path>"}``
+                mappings.  *source* is relative to ``/workspace/`` when not absolute.
+                *destination* is relative to *output_dir* when not absolute.
+            output_dir: Base directory on the host for relative destinations.
+                Defaults to ``Settings.OUTPUT_DIR``.
+
+        Returns:
+            ExportResult with per-file status.
+        """
+        self._check_session(session_id)
+        self._assert_container_alive(session_id)
+        info = self.sessions[session_id]
+
+        settings = get_settings()
+        root = Path(output_dir) if output_dir else Path(settings.OUTPUT_DIR)
+        base_dir = (root / session_id).resolve()
+        base_dir.mkdir(parents=True, exist_ok=True)
+
+        results: list[ExportFileResult] = []
+        all_ok = True
+
+        for entry in files:
+            src = entry.get("source", "")
+            dst = entry.get("destination", "")
+
+            if not src:
+                results.append(ExportFileResult(
+                    source=src, destination=dst, success=False,
+                    error="source is required",
+                ))
+                all_ok = False
+                continue
+
+            container_path = src if src.startswith("/") else f"/workspace/{src}"
+
+            if not dst:
+                dst = Path(src).name
+            host_path = Path(dst) if Path(dst).is_absolute() else base_dir / dst
+            host_path = host_path.resolve()
+
+            try:
+                host_path.parent.mkdir(parents=True, exist_ok=True)
+
+                proc = subprocess.run(
+                    [
+                        "docker", "exec", "-i", info.container_name,
+                        "tar", "cf", "-", "-C", str(Path(container_path).parent),
+                        Path(container_path).name,
+                    ],
+                    capture_output=True,
+                    timeout=120,
+                )
+
+                if proc.returncode != 0:
+                    err = proc.stderr.decode(errors="replace")[:500]
+                    results.append(ExportFileResult(
+                        source=src, destination=str(host_path), success=False,
+                        error=f"tar failed: {err}",
+                    ))
+                    all_ok = False
+                    continue
+
+                tar_buf = io.BytesIO(proc.stdout)
+                with tarfile.open(fileobj=tar_buf, mode="r") as tar:
+                    members = tar.getmembers()
+                    if len(members) == 1 and members[0].isfile():
+                        member = members[0]
+                        member.name = host_path.name
+                        tar.extract(member, path=str(host_path.parent))
+                        size = host_path.stat().st_size
+                    else:
+                        host_path.mkdir(parents=True, exist_ok=True)
+                        tar.extractall(path=str(host_path))
+                        size = sum(
+                            f.stat().st_size
+                            for f in host_path.rglob("*") if f.is_file()
+                        )
+
+                results.append(ExportFileResult(
+                    source=src, destination=str(host_path),
+                    success=True, size=size,
+                ))
+
+            except Exception as exc:
+                results.append(ExportFileResult(
+                    source=src, destination=str(host_path), success=False,
+                    error=f"{type(exc).__name__}: {exc}",
+                ))
+                all_ok = False
+
+        return ExportResult(success=all_ok, files=results)
 
     def stop_session(self, session_id: str) -> bool:
         if session_id not in self._containers:

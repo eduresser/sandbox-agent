@@ -49,3 +49,4 @@ Thumbs.db
 .cursorignore
 
 data/
+outputs/

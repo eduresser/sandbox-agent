@@ -43,6 +43,9 @@ class Settings(BaseSettings):
     MAX_RESULT_CHARS: int = 20_000
     MAX_TRACEBACK_CHARS: int = 5_000
 
+    # ── Export ──
+    OUTPUT_DIR: str = "./outputs"
+
     # ── Agent ──
     MAX_ITERATIONS: int = 25
 

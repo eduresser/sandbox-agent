@@ -10,6 +10,7 @@ from sandbox_agent.sandbox.manager import SandboxManager
 from sandbox_agent.tools.create_session import create_create_session_tool
 from sandbox_agent.tools.execute_code import create_execute_code_tool
 from sandbox_agent.tools.execute_terminal import create_execute_terminal_tool
+from sandbox_agent.tools.export_files import create_export_files_tool
 from sandbox_agent.tools.stop_session import create_stop_session_tool
 from sandbox_agent.tools.upload_file import create_upload_file_tool
 
@@ -28,6 +29,7 @@ def create_tools(manager: SandboxManager) -> list:
         create_execute_code_tool(manager),
         create_execute_terminal_tool(manager),
         create_upload_file_tool(manager),
+        create_export_files_tool(manager),
         create_stop_session_tool(manager),
     ]
 

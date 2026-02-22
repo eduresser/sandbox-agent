@@ -224,6 +224,43 @@ def upload_file(
 
 
 @mcp.tool()
+def export_files(
+    session_id: str,
+    files: list[dict[str, str]],
+    output_dir: str | None = None,
+) -> dict[str, Any]:
+    """Exports files or directories from the sandbox to the host filesystem.
+
+    Use this to deliver results (reports, images, data) to the user or to
+    transfer artifacts between sandbox sessions.
+
+    The output includes per-file source/destination mappings that can be used
+    to feed files into another container.
+
+    Args:
+        session_id: ID returned by create_session.
+        files: List of objects with "source" and "destination" keys.
+            source: Path inside the container (relative to /workspace/ or absolute).
+            destination: Path on the host (relative to OUTPUT_DIR or absolute).
+                If omitted, the file keeps its original name inside OUTPUT_DIR.
+            Example: [{"source": "report.pdf", "destination": "client/report.pdf"}]
+        output_dir: Override the base output directory (defaults to OUTPUT_DIR setting).
+
+    Returns:
+        JSON with per-file results (source, destination, success, size, error).
+    """
+    manager = _get_manager()
+    try:
+        from dataclasses import asdict
+
+        result = manager.export_files(session_id, list(files), output_dir=output_dir)
+    except Exception as exc:
+        return _error_payload(manager, exc)
+
+    return asdict(result)
+
+
+@mcp.tool()
 def stop_session(session_id: str) -> dict[str, Any]:
     """Stops and removes the sandbox completely. Use when done with a session.
 

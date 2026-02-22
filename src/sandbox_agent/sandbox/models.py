@@ -48,3 +48,23 @@ class TerminalResult:
     exit_code: int
     stdout: str = ""
     stderr: str = ""
+
+
+@dataclass
+class ExportFileResult:
+    """Result of exporting a single file from the sandbox to the host."""
+
+    source: str
+    destination: str
+    success: bool
+    size: int = 0
+    error: str = ""
+
+
+@dataclass
+class ExportResult:
+    """Aggregated result of an export_files operation."""
+
+    success: bool
+    files: list[ExportFileResult] = field(default_factory=list)
+    error: str = ""

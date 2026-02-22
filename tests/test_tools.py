@@ -49,6 +49,7 @@ class TestToolCreation:
             "execute_code",
             "execute_terminal",
             "upload_file",
+            "export_files",
             "stop_session",
         }
         assert set(tools.keys()) == expected

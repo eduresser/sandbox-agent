@@ -13,8 +13,10 @@ LangGraph agent with Docker-based sandboxed code execution. Each session runs in
 - **Vision support** — auto-detects multimodal LLMs and sends matplotlib/ggplot figures as base64 PNG images
 - **Provider-agnostic** — works with OpenAI, Anthropic, or any compatible provider via `langchain-openai` init
 - **Runtime package install** — `pip install` / `npm install` / `install.packages()` / `Pkg.add()` at session creation or via terminal
-- **5 tools** — create_session, execute_code, execute_terminal, upload_file, stop_session
+- **6 tools** — create_session, execute_code, execute_terminal, upload_file, export_files, stop_session
 - **MCP server** — expose the same tools via Model Context Protocol (stdio transport)
+- **File export** — export files and directories from sandboxes to the host, organized by session (`OUTPUT_DIR/<session_id>/`)
+- **Cross-session transfer** — export from one session and upload into another using the returned host paths
 - **Auto-cleanup** — all containers are stopped and removed when the agent exits
 
 ## Prerequisites
@@ -87,7 +89,7 @@ Add to the Claude Desktop MCP config:
 }
 ```
 
-The MCP server exposes the same 5 tools as the CLI agent. The `upload_file` tool accepts file content directly (as text or base64) since MCP clients don't share a filesystem with the server.
+The MCP server exposes the same 6 tools as the CLI agent. The `upload_file` tool accepts file content directly (as text or base64) since MCP clients don't share a filesystem with the server. The `export_files` tool accepts an optional `output_dir` override.
 
 ### Programmatic
 
@@ -113,7 +115,62 @@ print(r1.stdout)
 r2 = manager.execute_code(sid, "df.shape")
 print(r2.result)
 
+# Export files from the sandbox to the host
+manager.execute_code(sid, "df.to_csv('/workspace/output.csv', index=False)")
+export = manager.export_files(sid, [
+    {"source": "output.csv", "destination": "output.csv"},
+])
+print(export.files[0].destination)  # ./outputs/<session_id>/output.csv
+
 manager.stop_session(sid)
+```
+
+#### Exporting Files
+
+`export_files` copies files and directories from the sandbox to the host. Files are organized under `OUTPUT_DIR/<session_id>/`:
+
+```python
+# Export a single file
+result = manager.export_files(sid, [
+    {"source": "report.pdf", "destination": "report.pdf"},
+])
+
+# Export an entire directory
+result = manager.export_files(sid, [
+    {"source": "results/", "destination": "results/"},
+])
+
+# Export multiple files at once
+result = manager.export_files(sid, [
+    {"source": "data.csv", "destination": "data.csv"},
+    {"source": "chart.png", "destination": "charts/chart.png"},
+    {"source": "/workspace/logs/", "destination": "logs/"},
+])
+
+# The result contains absolute host paths for each file
+for f in result.files:
+    print(f"{f.source} -> {f.destination} ({'OK' if f.success else f.error})")
+```
+
+#### Cross-Session File Transfer
+
+Use `export_files` + `upload_file` to move files between sessions:
+
+```python
+# Session A (Python): produce data
+sid_a = manager.create_session(runtime="python", dependencies={"pandas": ""}).session_id
+manager.execute_code(sid_a, """
+import pandas as pd
+df = pd.DataFrame({'x': [1,2,3], 'y': [4,5,6]})
+df.to_csv('/workspace/data.csv', index=False)
+""")
+export = manager.export_files(sid_a, [{"source": "data.csv", "destination": "data.csv"}])
+host_path = export.files[0].destination  # absolute path on host
+
+# Session B (R): consume the same data
+sid_b = manager.create_session(runtime="r", dependencies={"readr": ""}).session_id
+manager.upload_file(sid_b, host_path, "data.csv")
+manager.execute_code(sid_b, 'df <- readr::read_csv("/workspace/data.csv"); summary(df)')
 ```
 
 Other runtimes work the same way — pass `runtime="node"`, `runtime="r"`, or `runtime="julia"` to `create_session`.
@@ -181,6 +238,9 @@ CONTAINER_TMPFS_SIZE=200m            # tmpfs size for writable dirs
 EXECUTION_TIMEOUT_SECONDS=30         # Default code execution timeout
 MAX_SESSIONS=5                       # Maximum concurrent sandbox sessions
 TERMINAL_ROOT=False                  # Run terminal commands as root
+
+# Export
+OUTPUT_DIR=./outputs                 # Base directory for exported files (organized by session_id)
 
 # Output truncation limits (characters)
 MAX_STDOUT_CHARS=20000
