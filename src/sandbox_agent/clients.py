@@ -2,26 +2,34 @@
 
 from __future__ import annotations
 
-import sqlite3
 from functools import lru_cache
-from pathlib import Path
+
 from langchain.chat_models import init_chat_model
 from langchain_core.language_models import BaseChatModel
-from langgraph.checkpoint.sqlite import SqliteSaver
+from langgraph.checkpoint.postgres import PostgresSaver
+from psycopg.rows import dict_row
+from psycopg_pool import ConnectionPool
 
 from sandbox_agent.settings import get_settings
 
 
 @lru_cache(maxsize=1)
-def get_checkpointer() -> SqliteSaver | None:
-    """Return a cached SQLite checkpointer, or None if CHECKPOINT_DB_PATH is empty."""
+def get_checkpointer() -> PostgresSaver:
+    """Return a cached PostgreSQL checkpointer (shared with Aegra)."""
     settings = get_settings()
-    if not settings.CHECKPOINT_DB_PATH:
-        return None
-    db_path = Path(settings.CHECKPOINT_DB_PATH)
-    db_path.parent.mkdir(parents=True, exist_ok=True)
-    conn = sqlite3.connect(str(db_path), check_same_thread=False)
-    return SqliteSaver(conn)
+    checkpoint_db_url = (
+        f"postgresql://{settings.POSTGRES_USER}:{settings.POSTGRES_PASSWORD}"
+        f"@{settings.POSTGRES_HOST}:{settings.POSTGRES_PORT}/{settings.POSTGRES_DB}"
+    )
+    pool = ConnectionPool(
+        conninfo=checkpoint_db_url,
+        kwargs={"autocommit": True, "row_factory": dict_row},
+        min_size=1,
+        max_size=4,
+    )
+    checkpointer = PostgresSaver(pool)
+    checkpointer.setup()
+    return checkpointer
 
 
 @lru_cache(maxsize=1)

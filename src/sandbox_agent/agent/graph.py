@@ -83,7 +83,7 @@ def build_agent(
     Args:
         manager: Shared SandboxManager instance. If ``None``, creates one.
         llm: LLM instance. If ``None``, uses the cached model from clients.
-        checkpointer: Optional checkpointer for persistence (e.g. SqliteSaver).
+        checkpointer: Optional checkpointer for persistence (e.g. PostgresSaver).
             When provided, use ``config={"configurable": {"thread_id": "..."}}`` on invoke/stream.
 
     Returns:

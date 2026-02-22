@@ -8,7 +8,7 @@ LangGraph agent with Docker-based sandboxed code execution. Each session runs in
 - **Hardened containers** — non-root user (UID 65532), PID limits, memory+swap limits, tmpfs-only writable dirs, `no-new-privileges`
 - **Crash detection** — OOM-kill, fork bombs, segfaults are detected and reported clearly to the agent
 - **Persistent state** — variables survive between code executions (like Jupyter cells)
-- **Checkpointer SQLite** — conversation history persists across CLI restarts (configurable)
+- **Checkpointer PostgreSQL** — conversation history persists across CLI restarts (shared with Aegra)
 - **Async support** — Promises (Node.js) and coroutines (Python) are automatically awaited
 - **Multi-runtime** — Python, Node.js, R, and Julia
 - **Vision support** — auto-detects multimodal LLMs and sends matplotlib/ggplot figures as base64 PNG images
@@ -286,8 +286,7 @@ MAX_TRACEBACK_CHARS=5000
 # Agent
 MAX_ITERATIONS=25                    # Max LangGraph iterations (recursion limit)
 
-# Checkpointer (SQLite) — persistence across CLI restarts
-CHECKPOINT_DB_PATH=                  # Set empty to disable
+# Checkpointer uses POSTGRES_* (same as Aegra) — PostgreSQL must be running
 ```
 
 ## Runtimes

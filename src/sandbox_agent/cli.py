@@ -175,8 +175,6 @@ def main() -> None:
     )
     console.print()
 
-    messages: list = []
-
     try:
         while True:
             try:
@@ -193,23 +191,19 @@ def main() -> None:
                 break
 
             new_msg = HumanMessage(content=user_input)
-            if not checkpointer:
-                messages.append(new_msg)
 
             console.print()
 
             final_ai_content = ""
 
             try:
-                config: dict[str, Any] = {"recursion_limit": settings.MAX_ITERATIONS}
-                if checkpointer:
-                    config["configurable"] = {"thread_id": "cli"}
-                    input_messages = [new_msg]
-                    state_before = app.get_state(config)
-                    displayed_count = len(state_before.values.get("messages", []))
-                else:
-                    input_messages = messages
-                    displayed_count = len(messages)
+                config: dict[str, Any] = {
+                    "recursion_limit": settings.MAX_ITERATIONS,
+                    "configurable": {"thread_id": "cli"},
+                }
+                input_messages = [new_msg]
+                state_before = app.get_state(config)
+                displayed_count = len(state_before.values.get("messages", []))
 
                 for state_snapshot in app.stream(
                     {"messages": input_messages},
@@ -231,9 +225,6 @@ def main() -> None:
 
                         if isinstance(msg, AIMessage) and msg.content:
                             final_ai_content = msg.content
-
-                if not checkpointer:
-                    messages = all_msgs
 
             except Exception as exc:
                 console.print(
