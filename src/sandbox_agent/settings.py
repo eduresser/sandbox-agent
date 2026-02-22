@@ -25,9 +25,9 @@ class Settings(BaseSettings):
     CHAT_MODEL_API_KEY: str
 
     # ── Container ──
-    CONTAINER_MEMORY_LIMIT: str = "512m"
-    CONTAINER_CPU_QUOTA: int = 50_000
-    CONTAINER_PIDS_LIMIT: int = 128
+    CONTAINER_MEMORY_LIMIT: str = "2048m"
+    CONTAINER_CPU_QUOTA: int = 200_000
+    CONTAINER_PIDS_LIMIT: int = 512
     CONTAINER_TMPFS_SIZE: str = "200m"
     EXECUTION_TIMEOUT_SECONDS: int = 30
     MAX_SESSIONS: int = 5
