@@ -13,6 +13,7 @@ import contextvars
 import io
 import json
 import logging
+import shutil
 import signal
 import subprocess
 import tarfile
@@ -759,6 +760,13 @@ class SandboxManager:
             container.remove(force=True)
         except Exception:
             pass
+
+        output_dir = Path(get_settings().OUTPUT_DIR) / session_id
+        if output_dir.exists():
+            try:
+                shutil.rmtree(output_dir, ignore_errors=True)
+            except Exception:
+                pass
 
         return True
 

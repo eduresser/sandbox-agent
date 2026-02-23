@@ -232,6 +232,33 @@ class TestExportFilesManager:
                 output_dir=str(output_dir),
             )
 
+    def test_stop_session_removes_exported_files(self, manager, output_dir):
+        """stop_session cleans up OUTPUT_DIR/<session_id>/ to avoid accumulation."""
+        from sandbox_agent.settings import get_settings
+
+        info = manager.create_session(runtime="python")
+        sid = info.session_id
+        settings = get_settings()
+        original = settings.OUTPUT_DIR
+        settings.OUTPUT_DIR = str(output_dir)
+        try:
+            _create_file_in_sandbox(manager, sid, "cleanup_test.txt", "to be removed")
+
+            manager.export_files(
+                sid,
+                [{"source": "cleanup_test.txt", "destination": "cleanup_test.txt"}],
+            )
+
+            session_dir = output_dir / sid
+            assert (session_dir / "cleanup_test.txt").exists()
+
+            manager.stop_session(sid)
+
+            # After stop_session, exported files for this session should be removed
+            assert not session_dir.exists()
+        finally:
+            settings.OUTPUT_DIR = original
+
 
 # ── LangChain tool-level tests ────────────────────────────────
 
