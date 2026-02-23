@@ -226,6 +226,136 @@ def _parse_tool_json(raw: str, result: ParsedToolResult) -> None:
     result.text_summary = "\n".join(parts)
 
 
+# ── Tool Block Formatting (CLI-style) ─────────────────────
+
+_MAX_TOOL_OUTPUT_LINES = 60
+
+# Map runtime to st.code language (same as CLI _RUNTIME_LEXER)
+_RUNTIME_LANGUAGE: dict[str, str] = {
+    "python": "python",
+    "node": "javascript",
+    "r": "r",
+    "julia": "julia",
+}
+
+
+def format_tool_input_display(
+    tool_call: dict[str, Any],
+    sessions: dict[str, str] | None = None,
+) -> tuple[str, str]:
+    """Format tool input for display. Returns (text, language) for st.code.
+
+    For execute_code: uses runtime from sessions (session_id -> runtime) when
+    available; defaults to python. For execute_terminal: always bash.
+    """
+    name = tool_call.get("name", "?")
+    args = tool_call.get("args", {})
+
+    if name == "execute_code" and "code" in args:
+        lang = "python"
+        session_id = args.get("session_id", "")
+        if sessions and session_id and session_id in sessions:
+            lang = _RUNTIME_LANGUAGE.get(sessions[session_id], "python")
+        return (args["code"], lang)
+    if name == "execute_terminal" and "command" in args:
+        return (args["command"], "bash")
+    return (
+        json.dumps(args, indent=2, ensure_ascii=False, default=str),
+        "json",
+    )
+
+
+def _extract_tool_output_text(content: Any) -> str:
+    """Extract displayable text from ToolMessage content."""
+    if isinstance(content, str):
+        return content
+    if isinstance(content, list):
+        for block in content:
+            if isinstance(block, dict) and block.get("type") == "text":
+                return block["text"]
+    return str(content)
+
+
+def format_tool_output_display(content: Any, tool_name: str = "") -> tuple[str, bool]:
+    """Format tool output for display. Returns (formatted_text, is_error)."""
+    text_content = _extract_tool_output_text(content)
+
+    try:
+        parsed = json.loads(text_content) if isinstance(text_content, str) else text_content
+        formatted = json.dumps(parsed, indent=2, ensure_ascii=False, default=str)
+    except (json.JSONDecodeError, TypeError):
+        formatted = str(text_content)
+
+    lines = formatted.splitlines()
+    if len(lines) > _MAX_TOOL_OUTPUT_LINES:
+        visible = lines[:_MAX_TOOL_OUTPUT_LINES]
+        omitted = len(lines) - _MAX_TOOL_OUTPUT_LINES
+        visible.append(f"\n... +{omitted} linhas omitidas ...")
+        formatted = "\n".join(visible)
+
+    is_error = False
+    try:
+        parsed_check = (
+            json.loads(text_content) if isinstance(text_content, str) else text_content
+        )
+        if isinstance(parsed_check, dict) and parsed_check.get("success") is False:
+            is_error = True
+    except (json.JSONDecodeError, TypeError):
+        pass
+
+    if not is_error and isinstance(text_content, str) and "Error invoking tool" in text_content:
+        is_error = True
+
+    return (formatted, is_error)
+
+
+def collect_tool_blocks(messages: list[dict]) -> tuple[list[dict], str]:
+    """Pair tool_calls with ToolMessages and extract final AI content.
+
+    Returns (blocks, final_content) where blocks is a list of
+    {name, args, output, tool_call_id} (output may be None if still running).
+    """
+    blocks: list[dict[str, Any]] = []
+    final_content = ""
+
+    for msg in messages:
+        msg_type = msg.get("type", "")
+
+        if msg_type in ("ai", "AIMessage", "AIMessageChunk"):
+            tool_calls = msg.get("tool_calls", [])
+            if tool_calls:
+                for tc in tool_calls:
+                    blocks.append({
+                        "name": tc.get("name", "?"),
+                        "args": tc.get("args", {}),
+                        "output": None,
+                        "tool_call_id": tc.get("id", ""),
+                    })
+            content = msg.get("content", "")
+            if isinstance(content, str) and content:
+                final_content = content
+            elif isinstance(content, list):
+                text_parts = [
+                    b.get("text", "")
+                    for b in content
+                    if isinstance(b, dict) and b.get("type") == "text"
+                ]
+                if text_parts:
+                    final_content = "\n".join(text_parts)
+
+        elif msg_type in ("tool", "ToolMessage"):
+            tid = msg.get("tool_call_id", "")
+            output_content = msg.get("content", "")
+            for b in blocks:
+                if b.get("tool_call_id") == tid:
+                    b["output"] = output_content
+                    if msg.get("name"):
+                        b["name"] = msg["name"]
+                    break
+
+    return (blocks, final_content)
+
+
 # ── Session Tracking ────────────────────────────────────
 
 

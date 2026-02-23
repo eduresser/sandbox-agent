@@ -11,9 +11,12 @@ from utils import (
     ParsedToolResult,
     build_user_content,
     check_exported_file,
+    collect_tool_blocks,
     decode_b64_image,
     extract_sessions_from_messages,
     format_file_size,
+    format_tool_input_display,
+    format_tool_output_display,
     get_file_icon,
     parse_tool_message,
     read_exported_file,
@@ -82,6 +85,16 @@ st.markdown(
         flex: unset !important;
         display: block !important;
     }
+    /* Tool block: unified input+output with colored border */
+    .tool-block {
+        border-radius: 0.5rem;
+        padding: 0.75rem 1rem;
+        margin: 0.5rem 0;
+        font-family: ui-monospace, monospace;
+    }
+    .tool-block-input { margin-bottom: 0.75rem; }
+    .tool-block-output { margin-top: 0.5rem; }
+    .tool-block-title { font-weight: 600; margin-bottom: 0.5rem; }
     </style>
     """,
     unsafe_allow_html=True,
@@ -368,44 +381,72 @@ if st.session_state.thread_id is None and st.session_state.api_healthy:
 # ── Render Message History ──────────────────────────────
 
 
-def _render_message(msg: dict) -> None:
-    """Render a single message in the chat UI."""
-    msg_type = msg.get("type", "")
+def _render_human_message(msg: dict) -> None:
+    """Render a HumanMessage."""
+    with st.chat_message("user"):
+        content = msg.get("content", "")
+        if isinstance(content, str):
+            st.markdown(content)
+        elif isinstance(content, list):
+            for block in content:
+                if isinstance(block, dict) and block.get("type") == "text":
+                    st.markdown(block["text"])
 
-    if msg_type in ("human", "HumanMessage"):
-        with st.chat_message("user"):
-            content = msg.get("content", "")
-            if isinstance(content, str):
-                st.markdown(content)
-            elif isinstance(content, list):
-                for block in content:
-                    if isinstance(block, dict) and block.get("type") == "text":
-                        st.markdown(block["text"])
 
-    elif msg_type in ("ai", "AIMessage", "AIMessageChunk"):
-        with st.chat_message("assistant"):
-            content = msg.get("content", "")
-            if isinstance(content, str) and content:
-                st.markdown(content)
-            elif isinstance(content, list):
-                for block in content:
-                    if isinstance(block, dict):
-                        if block.get("type") == "text":
-                            st.markdown(block["text"])
-                        elif block.get("type") == "image_url":
-                            _render_b64_image(block.get("image_url", {}).get("url", ""))
+def _render_ai_content(content: str | list) -> None:
+    """Render AIMessage content (text + images)."""
+    if isinstance(content, str) and content:
+        st.markdown(content)
+    elif isinstance(content, list):
+        for block in content:
+            if isinstance(block, dict):
+                if block.get("type") == "text":
+                    st.markdown(block["text"])
+                elif block.get("type") == "image_url":
+                    _render_b64_image(block.get("image_url", {}).get("url", ""))
 
-            tool_calls = msg.get("tool_calls", [])
-            if tool_calls:
-                for tc in tool_calls:
-                    with st.expander(f"\U0001f527 {tc.get('name', 'tool')}", expanded=False):
-                        args_json = json.dumps(
-                            tc.get("args", {}), indent=2, ensure_ascii=False,
-                        )
-                        st.code(args_json, language="json")
 
-    elif msg_type in ("tool", "ToolMessage"):
-        _render_tool_message(msg)
+def _render_messages(messages: list[dict]) -> None:
+    """Render message history with unified tool blocks (input+output together)."""
+    sessions_map = {
+        sid: s.runtime
+        for sid, s in extract_sessions_from_messages(messages).items()
+    }
+    i = 0
+    while i < len(messages):
+        msg = messages[i]
+        msg_type = msg.get("type", "")
+
+        if msg_type in ("human", "HumanMessage"):
+            _render_human_message(msg)
+            i += 1
+            continue
+
+        # Assistant turn: collect AI + Tool messages until next Human
+        assistant_msgs: list[dict] = []
+        while i < len(messages) and messages[i].get("type") not in ("human", "HumanMessage"):
+            assistant_msgs.append(messages[i])
+            i += 1
+
+        if not assistant_msgs:
+            continue
+
+        blocks, final_content = collect_tool_blocks(assistant_msgs)
+
+        for block in blocks:
+            _render_tool_block(block, sessions=sessions_map)
+
+        if final_content or assistant_msgs:
+            last_ai = None
+            for m in reversed(assistant_msgs):
+                if m.get("type") in ("ai", "AIMessage", "AIMessageChunk"):
+                    last_ai = m
+                    break
+            if last_ai:
+                content = last_ai.get("content", "")
+                if content:
+                    with st.chat_message("assistant"):
+                        _render_ai_content(content)
 
 
 def _render_b64_image(url: str) -> None:
@@ -420,33 +461,118 @@ def _render_b64_image(url: str) -> None:
         st.image(url)
 
 
-def _render_tool_message(msg: dict) -> None:
-    """Render a ToolMessage with appropriate formatting."""
-    parsed = parse_tool_message(msg)
-    tool_name = parsed.tool_name or "tool"
+def _render_tool_block(block: dict, sessions: dict[str, str] | None = None) -> None:
+    """Render a unified tool block (input + output) with CLI-style formatting.
 
-    with st.chat_message("assistant"):
-        if parsed.tool_name in ("import_files", "export_files"):
-            _render_file_results(parsed)
-        elif parsed.tool_name == "create_session" and parsed.session_info:
+    sessions: optional dict mapping session_id -> runtime for execute_code
+    syntax highlighting (python, javascript, r, julia).
+    """
+    name = block.get("name", "tool")
+    args = block.get("args", {})
+    output = block.get("output")
+
+    input_text, input_lang = format_tool_input_display(
+        {"name": name, "args": args}, sessions=sessions
+    )
+
+    # Determine border color: yellow (pending), green (ok), red (error)
+    if output is None:
+        border_color = "#b8860b"  # yellow/darkgoldenrod
+        status_label = "Executando..."
+    else:
+        _, is_error = format_tool_output_display(output, name)
+        border_color = "#dc3545" if is_error else "#28a745"  # red / green
+        status_label = "ERRO" if is_error else "OK"
+
+    # Build a fake message dict for parse_tool_message when we have output
+    if output is not None and name in ("import_files", "export_files", "create_session", "stop_session"):
+        fake_msg = {"name": name, "content": output}
+        parsed = parse_tool_message(fake_msg)
+
+        if name in ("import_files", "export_files") and parsed.file_results:
+            with st.container():
+                st.markdown(
+                    f'<div class="tool-block" style="border-left: 4px solid {border_color}">'
+                    f'<div class="tool-block-title">\U0001f527 {name}</div>'
+                    f'<div class="tool-block-input"><strong>Input</strong></div>'
+                    f'</div>',
+                    unsafe_allow_html=True,
+                )
+                st.code(input_text, language=input_lang)
+                st.markdown('<div class="tool-block-output"><strong>Output</strong></div>', unsafe_allow_html=True)
+                _render_file_results(parsed)
+            return
+
+        if name == "create_session" and parsed.session_info:
             info = parsed.session_info
             sid = info.get("session_id", "")
             runtime = info.get("runtime", "")
             status = info.get("status", "")
             icon = "\U0001f7e2" if status == "running" else "\U0001f7e1"
-            st.info(f"{icon} Sessao `{sid}` ({runtime}) - {status}")
+            with st.container():
+                st.markdown(
+                    f'<div class="tool-block" style="border-left: 4px solid {border_color}">'
+                    f'<div class="tool-block-title">\U0001f527 {name}</div>'
+                    f'<div class="tool-block-input"><strong>Input</strong></div>'
+                    f'</div>',
+                    unsafe_allow_html=True,
+                )
+                st.code(input_text, language=input_lang)
+                st.markdown('<div class="tool-block-output"><strong>Output</strong></div>', unsafe_allow_html=True)
+                st.info(f"{icon} Sessao `{sid}` ({runtime}) - {status}")
+            return
 
-        elif parsed.tool_name == "stop_session" and parsed.session_info:
+        if name == "stop_session" and parsed.session_info:
             sid = parsed.session_info.get("session_id", "")
-            st.warning(f"\U0001f534 Sessao `{sid}` encerrada")
+            with st.container():
+                st.markdown(
+                    f'<div class="tool-block" style="border-left: 4px solid {border_color}">'
+                    f'<div class="tool-block-title">\U0001f527 {name}</div>'
+                    f'<div class="tool-block-input"><strong>Input</strong></div>'
+                    f'</div>',
+                    unsafe_allow_html=True,
+                )
+                st.code(input_text, language=input_lang)
+                st.markdown('<div class="tool-block-output"><strong>Output</strong></div>', unsafe_allow_html=True)
+                st.warning(f"\U0001f534 Sessao `{sid}` encerrada")
+            return
 
-        else:
-            with st.expander(f"\U0001f4e4 {tool_name}", expanded=bool(parsed.figures_b64)):
+        if parsed.figures_b64:
+            with st.container():
+                st.markdown(
+                    f'<div class="tool-block" style="border-left: 4px solid {border_color}">'
+                    f'<div class="tool-block-title">\U0001f527 {name} — {status_label}</div>'
+                    f'<div class="tool-block-input"><strong>Input</strong></div>'
+                    f'</div>',
+                    unsafe_allow_html=True,
+                )
+                st.code(input_text, language=input_lang)
+                st.markdown('<div class="tool-block-output"><strong>Output</strong></div>', unsafe_allow_html=True)
                 if parsed.text_summary:
                     st.markdown(parsed.text_summary)
+                for fig_b64 in parsed.figures_b64:
+                    st.image(decode_b64_image(fig_b64))
+            return
 
-        for fig_b64 in parsed.figures_b64:
-            st.image(decode_b64_image(fig_b64), use_container_width=True)
+    # Generic output: formatted JSON/text + figures (e.g. execute_code matplotlib/ggplot)
+    with st.container():
+        st.markdown(
+            f'<div class="tool-block" style="border-left: 4px solid {border_color}">'
+            f'<div class="tool-block-title">\U0001f527 {name} — {status_label}</div>'
+            f'<div class="tool-block-input"><strong>Input</strong></div>'
+            f'</div>',
+            unsafe_allow_html=True,
+        )
+        st.code(input_text, language=input_lang)
+        st.markdown('<div class="tool-block-output"><strong>Output</strong></div>', unsafe_allow_html=True)
+        if output is None:
+            st.caption("\u23f3 Executando...")
+        else:
+            formatted, _ = format_tool_output_display(output, name)
+            st.code(formatted, language="json")
+            parsed = parse_tool_message({"name": name, "content": output})
+            for fig_b64 in parsed.figures_b64:
+                st.image(decode_b64_image(fig_b64))
 
 
 def _render_file_results(parsed: ParsedToolResult) -> None:
@@ -487,8 +613,7 @@ def _render_file_results(parsed: ParsedToolResult) -> None:
 
 
 # Render existing messages
-for msg in st.session_state.messages:
-    _render_message(msg)
+_render_messages(st.session_state.messages)
 
 
 # ── Chat Input ──────────────────────────────────────────
@@ -551,49 +676,43 @@ if prompt is not None:
         configurable = _get_configurable()
 
         try:
-            with st.chat_message("assistant"):
-                response_placeholder = st.empty()
-                response_placeholder.markdown("\u23f3 Processando...")
+            assistant_placeholder = st.empty()
 
-                final_messages: list[dict] = []
-                last_ai_content = ""
+            final_messages: list[dict] = []
 
-                for event in client.stream_run(
-                    thread_id=st.session_state.thread_id,
-                    input_messages=input_messages,
-                    configurable=configurable,
-                ):
-                    if event.event == "values" and isinstance(event.data, dict):
-                        new_messages = event.data.get("messages", [])
-                        if new_messages:
-                            final_messages = new_messages
+            for event in client.stream_run(
+                thread_id=st.session_state.thread_id,
+                input_messages=input_messages,
+                configurable=configurable,
+            ):
+                if event.event == "values" and isinstance(event.data, dict):
+                    new_messages = event.data.get("messages", [])
+                    if new_messages:
+                        final_messages = new_messages
 
-                            last_msg = new_messages[-1]
-                            msg_type = last_msg.get("type", "")
+                        # Assistant turn: messages after last HumanMessage
+                        last_human_idx = -1
+                        for i in range(len(new_messages) - 1, -1, -1):
+                            if new_messages[i].get("type") in ("human", "HumanMessage"):
+                                last_human_idx = i
+                                break
+                        assistant_msgs = new_messages[last_human_idx + 1 :] if last_human_idx >= 0 else new_messages
 
-                            if msg_type in ("ai", "AIMessage", "AIMessageChunk"):
-                                content = last_msg.get("content", "")
-                                if isinstance(content, str) and content:
-                                    last_ai_content = content
-                                    response_placeholder.markdown(content)
-                                elif isinstance(content, list):
-                                    text_parts = [
-                                        b.get("text", "")
-                                        for b in content
-                                        if isinstance(b, dict) and b.get("type") == "text"
-                                    ]
-                                    if text_parts:
-                                        last_ai_content = "\n".join(text_parts)
-                                        response_placeholder.markdown(last_ai_content)
+                        blocks, final_content = collect_tool_blocks(assistant_msgs)
+                        sessions_map = {
+                            sid: s.runtime
+                            for sid, s in extract_sessions_from_messages(new_messages).items()
+                        }
 
-                                tool_calls = last_msg.get("tool_calls", [])
-                                if tool_calls:
-                                    names = ", ".join(tc.get("name", "") for tc in tool_calls)
-                                    response_placeholder.markdown(
-                                        f"\u23f3 Executando: {names}..."
-                                    )
-
-                response_placeholder.empty()
+                        with assistant_placeholder.container():
+                            for block in blocks:
+                                _render_tool_block(block, sessions=sessions_map)
+                            if final_content:
+                                with st.chat_message("assistant"):
+                                    st.markdown(final_content)
+                            elif not blocks:
+                                with st.chat_message("assistant"):
+                                    st.markdown("\u23f3 Processando...")
 
             # Replace messages with the final server state
             if final_messages:
