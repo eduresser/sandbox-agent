@@ -233,14 +233,14 @@ class TestExportFilesManager:
             )
 
     def test_stop_session_removes_exported_files(self, manager, output_dir):
-        """stop_session cleans up OUTPUT_DIR/<session_id>/ to avoid accumulation."""
+        """stop_session cleans up STORAGE_DIR/<session_id>/ (or thread_id/session_id) to avoid accumulation."""
         from sandbox_agent.settings import get_settings
 
         info = manager.create_session(runtime="python")
         sid = info.session_id
         settings = get_settings()
-        original = settings.OUTPUT_DIR
-        settings.OUTPUT_DIR = str(output_dir)
+        original = settings.STORAGE_DIR
+        settings.STORAGE_DIR = str(output_dir)
         try:
             _create_file_in_sandbox(manager, sid, "cleanup_test.txt", "to be removed")
 
@@ -249,6 +249,7 @@ class TestExportFilesManager:
                 [{"source": "cleanup_test.txt", "destination": "cleanup_test.txt"}],
             )
 
+            # No thread_id: flat STORAGE_DIR/session_id
             session_dir = output_dir / sid
             assert (session_dir / "cleanup_test.txt").exists()
 
@@ -257,7 +258,38 @@ class TestExportFilesManager:
             # After stop_session, exported files for this session should be removed
             assert not session_dir.exists()
         finally:
-            settings.OUTPUT_DIR = original
+            settings.STORAGE_DIR = original
+
+    def test_cleanup_thread_sessions_removes_thread_dir(self, manager, output_dir):
+        """cleanup_thread_sessions removes STORAGE_DIR/<thread_id>/ (uploads + session dirs)."""
+        from sandbox_agent.settings import get_settings
+        from sandbox_agent.sandbox.manager import current_thread_id
+
+        settings = get_settings()
+        original = settings.STORAGE_DIR
+        settings.STORAGE_DIR = str(output_dir)
+        token = current_thread_id.set("test_thread_cleanup")
+        try:
+            info = manager.create_session(runtime="python")
+            sid = info.session_id
+            _create_file_in_sandbox(manager, sid, "thread_cleanup.txt", "to be removed")
+            manager.export_files(sid, [{"source": "thread_cleanup.txt", "destination": "thread_cleanup.txt"}])
+
+            # Simulate frontend upload at STORAGE_DIR/thread_id/uploads/
+            thread_dir = output_dir / "test_thread_cleanup"
+            (thread_dir / "uploads" / "uploaded.csv").parent.mkdir(parents=True, exist_ok=True)
+            (thread_dir / "uploads" / "uploaded.csv").write_text("uploaded,data")
+            session_dir = thread_dir / sid
+            assert (session_dir / "thread_cleanup.txt").exists()
+            assert (thread_dir / "uploads" / "uploaded.csv").exists()
+
+            manager.cleanup_thread_sessions("test_thread_cleanup")
+
+            # Entire thread dir (uploads + session subdirs) should be removed
+            assert not thread_dir.exists()
+        finally:
+            current_thread_id.reset(token)
+            settings.STORAGE_DIR = original
 
 
 # ── LangChain tool-level tests ────────────────────────────────
@@ -295,11 +327,11 @@ class TestExportFilesTool:
                     "command": f"echo 'tool_export_test' > /workspace/tool_file.txt",
                 }))
 
-                # Temporarily patch OUTPUT_DIR for this test
+                # Temporarily patch STORAGE_DIR for this test
                 from sandbox_agent.settings import get_settings
                 settings = get_settings()
-                original = settings.OUTPUT_DIR
-                settings.OUTPUT_DIR = str(out_dir)
+                original = settings.STORAGE_DIR
+                settings.STORAGE_DIR = str(out_dir)
 
                 try:
                     r = json.loads(export.invoke({
@@ -307,7 +339,7 @@ class TestExportFilesTool:
                         "files": [{"source": "tool_file.txt", "destination": "tool_file.txt"}],
                     }))
                 finally:
-                    settings.OUTPUT_DIR = original
+                    settings.STORAGE_DIR = original
 
                 assert r["success"] is True
                 assert len(r["files"]) == 1

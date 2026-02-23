@@ -265,10 +265,10 @@ def export_files(
         session_id: ID returned by create_session.
         files: List of objects with "source" and "destination" keys.
             source: Path inside the container (relative to /workspace/ or absolute).
-            destination: Path on the host (relative to OUTPUT_DIR or absolute).
-                If omitted, the file keeps its original name inside OUTPUT_DIR.
+            destination: Path on the host (relative to STORAGE_DIR/<session_id>/ or absolute).
+                If omitted, the file keeps its original name. MCP uses flat STORAGE_DIR/<session_id>/.
             Example: [{"source": "report.pdf", "destination": "client/report.pdf"}]
-        output_dir: Override the base output directory (defaults to OUTPUT_DIR setting).
+        output_dir: Override the base output directory (defaults to STORAGE_DIR setting).
 
     Returns:
         JSON with per-file results (source, destination, success, size, error).

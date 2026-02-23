@@ -10,8 +10,9 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
-UPLOAD_DIR = Path("./uploads")
-OUTPUT_DIR = Path("./outputs")
+# Same as backend: STORAGE_DIR from env, default ./storage
+_STORAGE_DIR = os.environ.get("STORAGE_DIR", "./storage")
+STORAGE_DIR = Path(_STORAGE_DIR)
 
 FILE_ICONS: dict[str, str] = {
     ".py": "\U0001f40d",
@@ -94,9 +95,11 @@ def save_uploaded_files(
 ) -> list[dict[str, Any]]:
     """Save Streamlit UploadedFile objects to disk.
 
+    Files are stored under STORAGE_DIR/<thread_id>/uploads/ (cleaned when thread is evicted).
+
     Returns a list of dicts with keys: name, path, size.
     """
-    dest_dir = UPLOAD_DIR / thread_id
+    dest_dir = STORAGE_DIR / thread_id / "uploads"
     dest_dir.mkdir(parents=True, exist_ok=True)
 
     saved: list[dict[str, Any]] = []

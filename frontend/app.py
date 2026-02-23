@@ -191,7 +191,11 @@ def _switch_thread(thread_id: str) -> None:
 
 
 def _get_thread_preview(thread_id: str) -> str:
-    """Return a short preview of the first human message in a thread."""
+    """Return a short preview of the first human message in a thread.
+
+    Returns empty string if thread has no messages or no response (only human,
+    no AI/tool reply) — such threads are not shown in history.
+    """
     previews = st.session_state.thread_previews
     if thread_id in previews:
         return previews[thread_id]
@@ -199,6 +203,13 @@ def _get_thread_preview(thread_id: str) -> str:
     try:
         state = client.get_thread_state(thread_id)
         msgs = state.get("values", {}).get("messages", [])
+        has_response = any(
+            m.get("type") in ("ai", "AIMessage", "AIMessageChunk", "tool", "ToolMessage")
+            for m in msgs
+        )
+        if not has_response:
+            return ""
+
         for m in msgs:
             if m.get("type") in ("human", "HumanMessage"):
                 content = m.get("content", "")
@@ -307,16 +318,19 @@ with st.sidebar:
         use_container_width=True,
         type="primary",
     ):
-        _create_new_thread()
+        st.session_state.thread_id = None
+        st.session_state.messages = []
+        st.session_state.uploaded_file_metas = []
         st.rerun()
 
-    # Middle: scrollable thread list (CSS expands to fill space)
+    # Middle: scrollable thread list (only threads with at least one message + response)
     _refresh_threads()
     threads = st.session_state.threads_list
+    threads_with_content = [t for t in threads if _get_thread_preview(t.get("thread_id", ""))]
 
     with st.container(height=300, border=False):
-        if threads:
-            for t in threads:
+        if threads_with_content:
+            for t in threads_with_content:
                 tid = t.get("thread_id", "")
                 is_current = tid == st.session_state.thread_id
                 updated = t.get("updated_at", "")
@@ -373,9 +387,7 @@ if not st.session_state.api_healthy:
         "Inicie a API com `uv run sandbox-agent api` ou use `uv run sandbox-agent ui` (inicia a API automaticamente)."
     )
 
-# Auto-create thread if none exists
-if st.session_state.thread_id is None and st.session_state.api_healthy:
-    _create_new_thread()
+# No auto-create: thread is created only when user sends first message and gets a response
 
 
 # ── Render Message History ──────────────────────────────
@@ -632,7 +644,13 @@ if prompt is not None:
     if not text and not files:
         st.stop()
 
-    # Save uploaded files
+    # Create thread on first message (no empty threads in history)
+    if st.session_state.thread_id is None and st.session_state.api_healthy:
+        tid = _create_new_thread()
+        if not tid:
+            st.stop()
+
+    # Save uploaded files to STORAGE_DIR/<thread_id>/uploads/ (cleaned when thread is evicted)
     file_metas: list[dict] = []
     if files and st.session_state.thread_id:
         file_metas = save_uploaded_files(st.session_state.thread_id, files)
@@ -643,14 +661,6 @@ if prompt is not None:
 
     if not full_content.strip():
         st.stop()
-
-    # Update thread preview cache with first line of first message
-    tid = st.session_state.thread_id
-    if tid and not st.session_state.thread_previews.get(tid):
-        first_line = (text or full_content).strip().split("\n")[0]
-        st.session_state.thread_previews[tid] = (
-            first_line[:40] + ("..." if len(first_line) > 40 else "")
-        )
 
     # Add user message to state and render
     user_msg = {"type": "human", "content": full_content}
@@ -714,9 +724,15 @@ if prompt is not None:
                                 with st.chat_message("assistant"):
                                     st.markdown("\u23f3 Processando...")
 
-            # Replace messages with the final server state
+            # Replace messages with the final server state; only then add to history
             if final_messages:
                 st.session_state.messages = final_messages
+                tid = st.session_state.thread_id
+                if tid and not st.session_state.thread_previews.get(tid):
+                    first_line = (text or full_content).strip().split("\n")[0]
+                    st.session_state.thread_previews[tid] = (
+                        first_line[:40] + ("..." if len(first_line) > 40 else "")
+                    )
 
         except Exception as e:
             st.error(f"Erro durante execucao: {e}")

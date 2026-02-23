@@ -19,16 +19,16 @@ def create_export_files_tool(manager: SandboxManager):
     ) -> str:
         """Exports one or more files or directories from the sandbox to the host machine.
 
-        The base output directory is configured via the OUTPUT_DIR setting
-        (defaults to "./outputs"). Relative destination paths are resolved
+        The base output directory is configured via the STORAGE_DIR setting
+        (defaults to "./storage"). Relative destination paths are resolved
         against that directory.
 
         Args:
             session_id: ID returned by create_session.
             files: List of objects with "source" and "destination" keys.
                 source: Path inside the container (relative to /workspace/ or absolute).
-                destination: Path on the host (relative to OUTPUT_DIR or absolute).
-                    If omitted, the file keeps its original name inside OUTPUT_DIR.
+                destination: Path on the host (relative to STORAGE_DIR or absolute).
+                    If omitted, the file keeps its original name inside STORAGE_DIR.
                 Example: [{"source": "report.pdf", "destination": "client/report.pdf"},
                           {"source": "/workspace/data.csv", "destination": "data.csv"}]
 

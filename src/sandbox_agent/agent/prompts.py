@@ -553,12 +553,13 @@ PHASE 5 — LAST RESORT ONLY:
   <tool name="export_files">
     Exports one or more files or directories FROM the sandbox TO the host machine.
     This is the reverse of import_files: it copies results out of the container.
-    Files are saved to OUTPUT_DIR/<session_id>/<destination> by default.
+    Files are saved to STORAGE_DIR/<thread_id>/<session_id>/<destination> (or
+    STORAGE_DIR/<session_id>/ when no thread context, e.g. MCP).
     <param name="session_id">ID returned by create_session.</param>
     <param name="files">
       List of objects with "source" and "destination" keys.
       - source: path inside the container (relative to /workspace/ or absolute).
-      - destination: path on the host (relative to OUTPUT_DIR/<session_id>/ or absolute).
+      - destination: path on the host (relative to session output dir or absolute).
         If omitted, the original filename is used.
       Example: [{"source": "report.pdf", "destination": "report.pdf"},
                 {"source": "results/", "destination": "results/"}]

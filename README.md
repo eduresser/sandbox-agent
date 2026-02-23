@@ -16,7 +16,7 @@ LangGraph agent with Docker-based sandboxed code execution. Each session runs in
 - **Runtime package install** — `pip install` / `npm install` / `install.packages()` / `Pkg.add()` at session creation or via terminal
 - **6 tools** — create_session, execute_code, execute_terminal, import_files, export_files, stop_session
 - **MCP server** — expose the same tools via Model Context Protocol (stdio transport)
-- **File export** — export files and directories from sandboxes to the host, organized by session (`OUTPUT_DIR/<session_id>/`)
+- **File export** — export files and directories from sandboxes to the host (`STORAGE_DIR/<thread_id>/<session_id>/` or `STORAGE_DIR/<session_id>/` for MCP)
 - **File import** — import files and directories from the host into sandboxes, including entire folder trees
 - **Cross-session transfer** — export from one session and import into another using the returned host paths
 - **Auto-cleanup** — all containers are stopped and removed when the agent exits
@@ -145,14 +145,14 @@ manager.execute_code(sid, "df.to_csv('/workspace/output.csv', index=False)")
 export = manager.export_files(sid, [
     {"source": "output.csv", "destination": "output.csv"},
 ])
-print(export.files[0].destination)  # ./outputs/<session_id>/output.csv
+print(export.files[0].destination)  # ./storage/<thread_id>/<session_id>/output.csv
 
 manager.stop_session(sid)
 ```
 
 #### Exporting Files
 
-`export_files` copies files and directories from the sandbox to the host. Files are organized under `OUTPUT_DIR/<session_id>/`:
+`export_files` copies files and directories from the sandbox to the host. Files are organized under `STORAGE_DIR/<thread_id>/<session_id>/` (or `STORAGE_DIR/<session_id>/` when no thread context, e.g. MCP):
 
 ```python
 # Export a single file
@@ -286,8 +286,8 @@ EXECUTION_TIMEOUT_SECONDS=30         # Default code execution timeout
 MAX_SESSIONS=5                       # Maximum concurrent sandbox sessions
 TERMINAL_ROOT=False                  # Run terminal commands as root
 
-# Export
-OUTPUT_DIR=./outputs                 # Base directory for exported files (organized by session_id)
+# Storage
+STORAGE_DIR=./storage                # Base dir: STORAGE_DIR/<thread_id>/uploads/ for uploads, STORAGE_DIR/<thread_id>/<session_id>/ for exports
 
 # Output truncation limits (characters)
 MAX_STDOUT_CHARS=20000

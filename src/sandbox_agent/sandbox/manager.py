@@ -652,7 +652,7 @@ class SandboxManager:
                 mappings.  *source* is relative to ``/workspace/`` when not absolute.
                 *destination* is relative to *output_dir* when not absolute.
             output_dir: Base directory on the host for relative destinations.
-                Defaults to ``Settings.OUTPUT_DIR``.
+                Defaults to ``Settings.STORAGE_DIR``.
 
         Returns:
             ExportResult with per-file status.
@@ -663,8 +663,12 @@ class SandboxManager:
         info = self.sessions[session_id]
 
         settings = get_settings()
-        root = Path(output_dir) if output_dir else Path(settings.OUTPUT_DIR)
-        base_dir = (root / session_id).resolve()
+        root = Path(output_dir) if output_dir else Path(settings.STORAGE_DIR)
+        # STORAGE_DIR/thread_id/session_id when thread exists, else STORAGE_DIR/session_id
+        if info.thread_id:
+            base_dir = (root / info.thread_id / session_id).resolve()
+        else:
+            base_dir = (root / session_id).resolve()
         base_dir.mkdir(parents=True, exist_ok=True)
 
         results: list[ExportFileResult] = []
@@ -761,10 +765,15 @@ class SandboxManager:
         except Exception:
             pass
 
-        output_dir = Path(get_settings().OUTPUT_DIR) / session_id
-        if output_dir.exists():
+        # Remove STORAGE_DIR/thread_id/session_id or STORAGE_DIR/session_id
+        root = Path(get_settings().STORAGE_DIR)
+        if info and info.thread_id:
+            session_dir = root / info.thread_id / session_id
+        else:
+            session_dir = root / session_id
+        if session_dir.exists():
             try:
-                shutil.rmtree(output_dir, ignore_errors=True)
+                shutil.rmtree(session_dir, ignore_errors=True)
             except Exception:
                 pass
 
@@ -779,6 +788,15 @@ class SandboxManager:
         for sid in sids:
             if self.stop_session(sid):
                 count += 1
+
+        # Remove STORAGE_DIR/thread_id/ (uploads + any session dirs)
+        thread_dir = Path(get_settings().STORAGE_DIR) / thread_id
+        if thread_dir.exists():
+            try:
+                shutil.rmtree(thread_dir, ignore_errors=True)
+            except Exception:
+                pass
+
         return count
 
     def cleanup_all(self) -> None:
