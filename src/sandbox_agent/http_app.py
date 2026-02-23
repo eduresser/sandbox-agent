@@ -4,11 +4,12 @@ from __future__ import annotations
 
 import logging
 import re
+from urllib.parse import unquote
 
-from fastapi import FastAPI
+from fastapi import FastAPI, Query
 from starlette.middleware.base import BaseHTTPMiddleware
 from starlette.requests import Request
-from starlette.responses import Response
+from starlette.responses import Response, StreamingResponse
 
 logger = logging.getLogger(__name__)
 
@@ -52,3 +53,68 @@ class ThreadDeleteCleanupMiddleware(BaseHTTPMiddleware):
 
 app = FastAPI()
 app.add_middleware(ThreadDeleteCleanupMiddleware)
+
+
+@app.get("/threads/{thread_id}/files/download")
+async def download_thread_file(
+    thread_id: str,
+    session_id: str = Query(..., description="Session that exported the file"),
+    path: str = Query(..., description="Container path (e.g. /workspace/report.pdf)"),
+):
+    """Download a file exported from a sandbox session (same thread)."""
+    manager = _get_manager()
+    path_decoded = unquote(path)
+    try:
+        is_exp = manager.is_file_exported(thread_id, session_id, path_decoded)
+        if not is_exp:
+            return Response(status_code=403, content="File not exported or access denied")
+    except ValueError:
+        return Response(status_code=400, content="Invalid path")
+    try:
+
+        def stream():
+            yield from manager.stream_exported_file(thread_id, session_id, path_decoded)
+
+        basename = path_decoded.rsplit("/", 1)[-1] if "/" in path_decoded else path_decoded
+        is_file = manager.is_exported_path_file(thread_id, session_id, path_decoded)
+        filename = basename if is_file else f"{basename}.tar"
+        media_type = "application/octet-stream" if is_file else "application/x-tar"
+        return StreamingResponse(
+            stream(),
+            media_type=media_type,
+            headers={"Content-Disposition": f'attachment; filename="{filename}"'},
+        )
+    except (ValueError, RuntimeError) as exc:
+        return Response(status_code=403, content=str(exc))
+
+
+@app.get("/files/download")
+async def download_file_mcp(
+    session_id: str = Query(..., description="Session that exported the file"),
+    path: str = Query(..., description="Container path (e.g. /workspace/report.pdf)"),
+):
+    """Download a file exported from a sandbox session (MCP, no thread)."""
+    manager = _get_manager()
+    path_decoded = unquote(path)
+    thread_id = None
+    try:
+        if not manager.is_file_exported(f"__mcp__{session_id}", session_id, path_decoded):
+            return Response(status_code=403, content="File not exported or access denied")
+    except ValueError:
+        return Response(status_code=400, content="Invalid path")
+    try:
+
+        def stream():
+            yield from manager.stream_exported_file(thread_id, session_id, path_decoded)
+
+        basename = path_decoded.rsplit("/", 1)[-1] if "/" in path_decoded else path_decoded
+        is_file = manager.is_exported_path_file(thread_id, session_id, path_decoded)
+        filename = basename if is_file else f"{basename}.tar"
+        media_type = "application/octet-stream" if is_file else "application/x-tar"
+        return StreamingResponse(
+            stream(),
+            media_type=media_type,
+            headers={"Content-Disposition": f'attachment; filename="{filename}"'},
+        )
+    except (ValueError, RuntimeError) as exc:
+        return Response(status_code=403, content=str(exc))

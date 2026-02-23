@@ -17,19 +17,21 @@ def create_import_files_tool(manager: SandboxManager):
         session_id: str,
         files: list[dict[str, str]],
     ) -> str:
-        """Copies one or more files or directories from the host machine into
-        the sandbox (/workspace/).  You have access to all host file paths.
-        Requires an active session_id from create_session.
+        """Copies files into the sandbox from the host or from another session.
+
+        Two modes:
+        - Host: {"source": "<host path>", "destination": "..."}
+        - Cross-session: {"session_id": "<src_session>", "path": "<container path>",
+          "destination": "..."} — use files returned by export_files from another
+          session in the same conversation.
 
         Args:
-            session_id: ID returned by create_session.
-            files: List of objects with "source" and "destination" keys.
-                source: Full path on the host (e.g. "/home/user/data.csv" or
-                    "/home/user/my_folder/").
-                destination: Name or path inside the sandbox (relative to
-                    /workspace/ or absolute). Defaults to the original name.
+            session_id: ID returned by create_session (destination).
+            files: List of file entries. For host: source + destination.
+                For cross-session: session_id + path + destination.
                 Example: [{"source": "/home/user/data.csv", "destination": "data.csv"},
-                          {"source": "/home/user/project/", "destination": "project/"}]
+                          {"session_id": "abc123", "path": "/workspace/out.csv",
+                           "destination": "out.csv"}]
 
         Returns:
             JSON with per-file results (source, destination, success, size, error).

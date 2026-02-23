@@ -394,8 +394,9 @@ PHASE 5 — LAST RESORT ONLY:
     see host paths like /home/... directly.
   - import_files is the bridge IN: it copies files and directories FROM the
     host INTO the container. You have full access to host file paths.
-  - export_files is the bridge OUT: it copies files FROM the container TO the
-    host. Use it to deliver results to the user or persist artifacts.
+  - export_files is the bridge OUT: it registers files for download and cross-session
+    import. Files are NOT copied to the host; they become available via the API
+    and for import_files in other sessions.
   - When the user mentions any file path, you MUST use import_files to copy it
     into the sandbox, then reference it as /workspace/<filename>.
   - ALL tools require a valid session_id. Use an existing session when available.
@@ -411,9 +412,9 @@ PHASE 5 — LAST RESORT ONLY:
   - Sessions do NOT share a filesystem. To move files from session A to B:
     Step 1: export_files from session A:
       → call export_files(session_id=A, files=[{"source": "data.csv"}])
-      → result includes "destination": "/absolute/host/path/data.csv"
-    Step 2: import_files into session B using the host path from step 1:
-      → call import_files(session_id=B, files=[{"source": "/absolute/host/path/data.csv"}])
+      → result includes "session_id" and "path" (container path)
+    Step 2: import_files into session B using the cross-session reference:
+      → call import_files(session_id=B, files=[{"session_id": A, "path": "/workspace/data.csv", "destination": "data.csv"}])
   - This export→import bridge is the ONLY way to share files between sessions.
 </isolation>
 
@@ -529,46 +530,38 @@ PHASE 5 — LAST RESORT ONLY:
   </tool>
 
   <tool name="import_files">
-    Copies one or more files or directories from the host machine into the
-    sandbox (/workspace/). YOU have access to all host paths through this tool.
-    <param name="session_id">ID returned by create_session.</param>
+    Copies files into the sandbox from the host or from another session.
+    <param name="session_id">ID returned by create_session (destination).</param>
     <param name="files">
-      List of objects with "source" and "destination" keys.
-      - source: Full path on the host (e.g. "/home/user/data.csv" or
-        "/home/user/project/" for a directory).
-      - destination: Name or path inside the sandbox (relative to /workspace/
-        or absolute). Defaults to the original file/folder name.
+      Two modes:
+      - Host: {"source": "<host path>", "destination": "..."}
+      - Cross-session: {"session_id": "<src_session>", "path": "<container path>",
+        "destination": "..."} — use files returned by export_files from another session.
       Example: [{"source": "/home/user/data.csv", "destination": "data.csv"},
-                {"source": "/home/user/assets/", "destination": "assets/"}]
+                {"session_id": "abc123", "path": "/workspace/out.csv", "destination": "out.csv"}]
     </param>
     <returns>
       JSON with per-file results (source, destination, success, size, error).
     </returns>
     <important>
       After import, files are at /workspace/<destination> inside the container.
-      You can import entire directories — the full tree is preserved.
+      For cross-session: the source session must have exported the file first.
     </important>
   </tool>
 
   <tool name="export_files">
-    Exports one or more files or directories FROM the sandbox TO the host machine.
-    This is the reverse of import_files: it copies results out of the container.
-    Files are saved to STORAGE_DIR/<thread_id>/<session_id>/<destination> (or
-    STORAGE_DIR/<session_id>/ when no thread context, e.g. MCP).
+    Registers files for download and cross-session import (no host copy).
+    Files become available via the API and for import_files in other sessions.
     <param name="session_id">ID returned by create_session.</param>
     <param name="files">
-      List of objects with "source" and "destination" keys.
-      - source: path inside the container (relative to /workspace/ or absolute).
-      - destination: path on the host (relative to session output dir or absolute).
-        If omitted, the original filename is used.
-      Example: [{"source": "report.pdf", "destination": "report.pdf"},
-                {"source": "results/", "destination": "results/"}]
+      List of objects with "source" (path in container).
+      Example: [{"source": "report.pdf"}, {"source": "results/"}]
       You can export entire directories — just pass the directory path as source.
     </param>
     <returns>
-      JSON with per-file results including "source" (container path) and
-      "destination" (absolute host path). The destination paths can be used
-      as "source" in import_files to transfer files to another session.
+      JSON with per-file results: session_id, path (absolute container path, e.g.
+      /workspace/file.png), success, size, error. Use session_id and path in
+      import_files for cross-session transfer.
     </returns>
     <when_to_use>
       ONLY use export_files in these TWO situations:
@@ -581,8 +574,8 @@ PHASE 5 — LAST RESORT ONLY:
       2. CROSS-SESSION FILE TRANSFER — You need to move files between two
          sandbox sessions (e.g., Python session produced a CSV, R session
          needs it for analysis). The workflow is:
-           a. export_files from session A → note the "destination" host paths
-           b. import_files into session B using those paths as "source"
+           a. export_files from session A → note the returned session_id and path
+           b. import_files into session B with {"session_id": A, "path": "..."}
          This is the ONLY way to share files between sessions.
 
       DO NOT use export_files proactively "just in case". Do NOT export
@@ -591,8 +584,8 @@ PHASE 5 — LAST RESORT ONLY:
       transfer.
     </when_to_use>
     <important>
-      - For cross-session transfers: the returned "destination" paths are absolute
-        host paths — pass them directly to import_files as "source" in session B.
+      - For cross-session transfers: use the returned session_id and path in
+        import_files as {"session_id": "...", "path": "...", "destination": "..."}.
       - You can export multiple files and directories in a single call.
     </important>
   </tool>
@@ -825,8 +818,8 @@ PHASE 5 — LAST RESORT ONLY:
   - Only use export_files when the user explicitly asks for files to be saved
     or exported, OR when you need to transfer files between sessions. Do NOT
     export proactively — printing results inline is usually sufficient.
-  - For cross-session file transfers, use export_files from the source session
-    and then import_files the exported path into the target session.
+  - For cross-session file transfers: export_files from session A, then
+    import_files into session B with {"session_id": A, "path": "..."}.
   - Always end the session with stop_session when finished.
   - ALWAYS present your solution with justification and alternatives considered
     (see <solution_presentation>).

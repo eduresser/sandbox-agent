@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import base64
 import json
-import os
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from pathlib import Path
@@ -430,22 +429,6 @@ def extract_sessions_from_messages(messages: list[dict]) -> dict[str, SessionSta
                 )
 
     return sessions
-
-
-# ── Exported File Helpers ───────────────────────────────
-
-
-def check_exported_file(path: str) -> bool:
-    """Check whether an exported file exists on the host."""
-    return os.path.isfile(path)
-
-
-def read_exported_file(path: str) -> bytes | None:
-    """Read an exported file's bytes, or None if inaccessible."""
-    try:
-        return Path(path).read_bytes()
-    except Exception:
-        return None
 
 
 def decode_b64_image(b64_str: str) -> bytes:

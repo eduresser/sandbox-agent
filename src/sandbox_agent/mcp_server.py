@@ -185,22 +185,20 @@ def import_files(
     session_id: str,
     files: list[dict[str, str]],
 ) -> dict[str, Any]:
-    """Imports files or directories into the sandbox's /workspace/ directory.
+    """Imports files into the sandbox from host, inline content, or another session.
 
-    Since MCP clients don't share a filesystem with the server, each file
-    entry can provide content directly (as text or base64-encoded binary) via
-    "file_content" and "encoding" keys, OR a host path via "source".
+    Each entry can be:
+    - Inline: "file_name", "file_content", optional "encoding" (text/base64)
+    - Host path: "source" (host path), optional "destination"
+    - Cross-session: "session_id" (source session), "path" (container path),
+      optional "destination" — file must have been exported from that session.
 
     Args:
-        session_id: ID returned by create_session.
-        files: List of file objects. Each object must have:
-            - For inline content: "file_name" (str), "file_content" (str),
-              and optionally "encoding" ("text" or "base64", default "text").
-            - For host paths: "source" (host path) and optionally
-              "destination" (name in sandbox, defaults to source filename).
-            Examples:
-              [{"file_name": "data.csv", "file_content": "a,b\\n1,2"}]
-              [{"source": "/tmp/report.pdf", "destination": "report.pdf"}]
+        session_id: ID returned by create_session (destination).
+        files: List of file objects. Examples:
+            [{"file_name": "data.csv", "file_content": "a,b\\n1,2"}]
+            [{"source": "/tmp/report.pdf", "destination": "report.pdf"}]
+            [{"session_id": "abc123", "path": "/workspace/out.csv", "destination": "out.csv"}]
 
     Returns:
         JSON with per-file results (source, destination, success, size, error).
@@ -225,6 +223,12 @@ def import_files(
                 resolved_files.append({
                     "source": str(tmp_paths[-1]),
                     "destination": fname,
+                })
+            elif entry.get("session_id"):
+                resolved_files.append({
+                    "session_id": entry["session_id"],
+                    "path": entry.get("path", ""),
+                    "destination": entry.get("destination", ""),
                 })
             else:
                 resolved_files.append({
@@ -251,33 +255,26 @@ def import_files(
 def export_files(
     session_id: str,
     files: list[dict[str, str]],
-    output_dir: str | None = None,
 ) -> dict[str, Any]:
-    """Exports files or directories from the sandbox to the host filesystem.
+    """Registers files for download and cross-session import (no host copy).
 
-    Use this to deliver results (reports, images, data) to the user or to
-    transfer artifacts between sandbox sessions.
-
-    The output includes per-file source/destination mappings that can be used
-    to feed files into another container.
+    Files become available via GET /files/download?session_id=...&path=...
+    (MCP has no thread_id). Use import_files with session_id+path for cross-session.
 
     Args:
         session_id: ID returned by create_session.
-        files: List of objects with "source" and "destination" keys.
-            source: Path inside the container (relative to /workspace/ or absolute).
-            destination: Path on the host (relative to STORAGE_DIR/<session_id>/ or absolute).
-                If omitted, the file keeps its original name. MCP uses flat STORAGE_DIR/<session_id>/.
-            Example: [{"source": "report.pdf", "destination": "client/report.pdf"}]
-        output_dir: Override the base output directory (defaults to STORAGE_DIR setting).
+        files: List of objects with "source" (path in container).
+            Example: [{"source": "report.pdf"}, {"source": "/workspace/data.csv"}]
 
     Returns:
-        JSON with per-file results (source, destination, success, size, error).
+        JSON with per-file results (session_id, path, success, size, error).
+        path is always absolute (e.g. /workspace/file.png).
     """
     manager = _get_manager()
     try:
         from dataclasses import asdict
 
-        result = manager.export_files(session_id, list(files), output_dir=output_dir)
+        result = manager.export_files(session_id, list(files))
     except Exception as exc:
         return _error_payload(manager, exc)
 

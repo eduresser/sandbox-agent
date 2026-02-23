@@ -17,23 +17,21 @@ def create_export_files_tool(manager: SandboxManager):
         session_id: str,
         files: list[dict[str, str]],
     ) -> str:
-        """Exports one or more files or directories from the sandbox to the host machine.
+        """Registers files for download and cross-session import (no host copy).
 
-        The base output directory is configured via the STORAGE_DIR setting
-        (defaults to "./storage"). Relative destination paths are resolved
-        against that directory.
+        Files become available via the API download endpoint and for import_files
+        in other sessions of the same conversation. The user can download via
+        GET /threads/{thread_id}/files/download?session_id=...&path=...
 
         Args:
             session_id: ID returned by create_session.
-            files: List of objects with "source" and "destination" keys.
+            files: List of objects with "source" (and optional "destination").
                 source: Path inside the container (relative to /workspace/ or absolute).
-                destination: Path on the host (relative to STORAGE_DIR or absolute).
-                    If omitted, the file keeps its original name inside STORAGE_DIR.
-                Example: [{"source": "report.pdf", "destination": "client/report.pdf"},
-                          {"source": "/workspace/data.csv", "destination": "data.csv"}]
+                Example: [{"source": "report.pdf"}, {"source": "/workspace/data.csv"}]
 
         Returns:
-            JSON with per-file results (source, destination, success, size, error).
+            JSON with per-file results (session_id, path, success, size, error).
+            path is always absolute inside the container (e.g. /workspace/report.pdf).
         """
         try:
             result = manager.export_files(session_id, list(files))

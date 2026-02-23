@@ -80,10 +80,14 @@ class ImportResult:
 
 @dataclass
 class ExportFileResult:
-    """Result of exporting a single file from the sandbox to the host."""
+    """Result of exporting a single file from the sandbox (on-demand, no host copy).
 
-    source: str
-    destination: str
+    Files are registered as "released" for download via HTTP or cross-session import.
+    path is always absolute inside the container (e.g. /workspace/report.pdf).
+    """
+
+    session_id: str
+    path: str  # absolute path inside container (e.g. /workspace/report.pdf)
     success: bool
     size: int = 0
     error: str = ""

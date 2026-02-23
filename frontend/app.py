@@ -11,7 +11,6 @@ from api_client import AegraClient
 from utils import (
     ParsedToolResult,
     build_user_content,
-    check_exported_file,
     collect_tool_blocks,
     decode_b64_image,
     extract_sessions_from_messages,
@@ -20,7 +19,6 @@ from utils import (
     format_tool_output_display,
     get_file_icon,
     parse_tool_message,
-    read_exported_file,
     save_uploaded_files,
     time_ago,
 )
@@ -97,6 +95,38 @@ st.markdown(
     .tool-block-input { margin-bottom: 0.75rem; }
     .tool-block-output { margin-top: 0.5rem; }
     .tool-block-title { font-weight: 600; margin-bottom: 0.5rem; }
+    /* Download button: verde quando disponível (não desabilitado) */
+    div[data-testid="stDownloadButton"] button:not(:disabled) {
+        background-color: #28a745 !important;
+        border-color: #28a745 !important;
+        color: white !important;
+    }
+    div[data-testid="stDownloadButton"] button:not(:disabled):hover {
+        background-color: #218838 !important;
+        border-color: #1e7e34 !important;
+        color: white !important;
+    }
+    /* Botão desabilitado: cinza */
+    div[data-testid="stDownloadButton"] button:disabled,
+    div[data-testid="stButton"] button:disabled {
+        background-color: #6c757d !important;
+        border-color: #6c757d !important;
+        color: white !important;
+        opacity: 0.65;
+        cursor: not-allowed !important;
+    }
+    /* Linha botão + caption: flex, cada item com seu tamanho natural */
+    div[data-testid="stHorizontalBlock"]:has([data-testid="stDownloadButton"]) {
+        display: flex !important;
+        flex-wrap: wrap !important;
+        align-items: center !important;
+        gap: 0.5rem !important;
+    }
+    div[data-testid="stHorizontalBlock"]:has([data-testid="stDownloadButton"]) > div {
+        flex: 0 0 auto !important;
+        width: fit-content !important;
+        max-width: fit-content !important;
+    }
     </style>
     """,
     unsafe_allow_html=True,
@@ -526,7 +556,12 @@ def _render_tool_block(block: dict, sessions: dict[str, str] | None = None, key_
                 )
                 st.code(input_text, language=input_lang)
                 st.markdown('<div class="tool-block-output"><strong>Output</strong></div>', unsafe_allow_html=True)
-                _render_file_results(parsed, key_suffix=key_suffix)
+                _render_file_results(
+                    parsed,
+                    thread_id=st.session_state.thread_id,
+                    client=client,
+                    key_suffix=key_suffix,
+                )
             return
 
         if name == "create_session" and parsed.session_info:
@@ -601,7 +636,12 @@ def _render_tool_block(block: dict, sessions: dict[str, str] | None = None, key_
                 st.image(decode_b64_image(fig_b64))
 
 
-def _render_file_results(parsed: ParsedToolResult, key_suffix: str = "") -> None:
+def _render_file_results(
+    parsed: ParsedToolResult,
+    thread_id: str | None = None,
+    client: AegraClient | None = None,
+    key_suffix: str = "",
+) -> None:
     """Render import/export file operation results."""
     is_export = parsed.tool_name == "export_files"
     label = "Exportacao" if is_export else "Importacao"
@@ -610,30 +650,53 @@ def _render_file_results(parsed: ParsedToolResult, key_suffix: str = "") -> None
         success = fr.get("success", False)
         source = fr.get("source", "")
         dest = fr.get("destination", "")
+        session_id = fr.get("session_id", "")
+        path = fr.get("path", "")
         size = fr.get("size", 0)
         error = fr.get("error", "")
-        filename = Path(source).name if source else Path(dest).name
+        filename = (
+            Path(path).name if path
+            else Path(source).name if source
+            else Path(dest).name
+        )
 
         icon = get_file_icon(filename)
         size_str = format_file_size(size) if size else ""
 
         if success:
-            if is_export and dest:
-                accessible = check_exported_file(dest)
-                if accessible:
-                    st.success(f"{icon} {filename} ({size_str}) - Disponivel")
-                    file_bytes = read_exported_file(dest)
-                    if file_bytes:
-                        st.download_button(
-                            label=f"Baixar {filename}",
-                            data=file_bytes,
-                            file_name=filename,
-                            key=f"dl_{dest}{key_suffix}",
-                        )
-                else:
-                    st.warning(f"{icon} {filename} - Inacessivel (arquivo pode ter sido removido)")
+            if is_export and session_id and path and thread_id and client:
+                try:
+                    file_bytes = client.download_exported_file(thread_id, session_id, path)
+                    available = bool(file_bytes)
+                except Exception:
+                    file_bytes = b""
+                    available = False
+                btn_col, status_col = st.columns([1, 1])
+                with btn_col:
+                    st.download_button(
+                        label="Baixar",
+                        data=file_bytes or b"",
+                        file_name=filename,
+                        key=f"dl_{session_id}_{path}{key_suffix}",
+                        type="primary",
+                        disabled=not available,
+                    )
+                with status_col:
+                    st.caption(f"{icon} {filename} ({size_str}) — {'Disponível' if available else 'Indisponível'}")
+            elif is_export and session_id and path:
+                btn_col, status_col = st.columns([1, 1])
+                with btn_col:
+                    st.download_button(
+                        label="Baixar",
+                        data=b"",
+                        file_name=filename,
+                        key=f"dl_{session_id}_{path}{key_suffix}",
+                        disabled=True,
+                    )
+                with status_col:
+                    st.caption(f"{icon} {filename} ({size_str}) — Indisponível")
             else:
-                st.success(f"{icon} {filename} ({size_str}) - {label} OK")
+                st.caption(f"{icon} {filename} ({size_str}) — {label} OK")
         else:
             st.error(f"{icon} {filename} - Falha: {error}")
 

@@ -22,7 +22,7 @@ import time
 import uuid
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any
+from typing import Any, Generator
 
 import docker
 import docker.errors
@@ -113,6 +113,7 @@ class SandboxManager:
         self.sessions: dict[str, SessionInfo] = {}
         self._containers: dict[str, Any] = {}
         self.thread_sessions: dict[str, set[str]] = {}
+        self._exported_files: dict[str, dict[str, set[str]]] = {}  # thread_key -> session_id -> set(paths)
         self._lock = threading.Lock()
         self.docker_dir = (
             Path(docker_dir) if docker_dir else Path(__file__).parent.parent / "docker"
@@ -121,6 +122,86 @@ class SandboxManager:
         self._register_cleanup()
         self._cleanup_orphaned_containers()
         self._start_gc()
+        self._ensure_exported_files_table()
+
+    def _ensure_exported_files_table(self) -> None:
+        """Create exported_files table in PostgreSQL for cross-process sharing."""
+        try:
+            from sandbox_agent.clients import get_db_conninfo
+            import psycopg
+        except Exception:
+            return
+        try:
+            with psycopg.connect(get_db_conninfo(), autocommit=True) as conn:
+                with conn.cursor() as cur:
+                    cur.execute("""
+                        CREATE TABLE IF NOT EXISTS exported_files (
+                            thread_key TEXT NOT NULL,
+                            session_id TEXT NOT NULL,
+                            path TEXT NOT NULL,
+                            PRIMARY KEY (thread_key, session_id, path)
+                        )
+                    """)
+        except Exception:
+            logger.debug("Could not create exported_files table", exc_info=True)
+
+    def _db_add_exported(self, thread_key: str, session_id: str, path: str) -> None:
+        try:
+            from sandbox_agent.clients import get_db_conninfo
+            import psycopg
+            with psycopg.connect(get_db_conninfo(), autocommit=True) as conn:
+                with conn.cursor() as cur:
+                    cur.execute(
+                        "INSERT INTO exported_files (thread_key, session_id, path) VALUES (%s, %s, %s) ON CONFLICT DO NOTHING",
+                        (thread_key, session_id, path),
+                    )
+        except Exception:
+            pass
+
+    def _db_remove_exported_session(self, session_id: str) -> None:
+        try:
+            from sandbox_agent.clients import get_db_conninfo
+            import psycopg
+            with psycopg.connect(get_db_conninfo(), autocommit=True) as conn:
+                with conn.cursor() as cur:
+                    cur.execute(
+                        "DELETE FROM exported_files WHERE session_id = %s",
+                        (session_id,),
+                    )
+        except Exception:
+            pass
+
+    def _db_remove_exported_thread(self, thread_key: str) -> None:
+        try:
+            from sandbox_agent.clients import get_db_conninfo
+            import psycopg
+            with psycopg.connect(get_db_conninfo(), autocommit=True) as conn:
+                with conn.cursor() as cur:
+                    cur.execute(
+                        "DELETE FROM exported_files WHERE thread_key = %s",
+                        (thread_key,),
+                    )
+        except Exception:
+            pass
+
+    def _db_is_file_exported(self, thread_key: str, session_id: str, path: str) -> bool:
+        try:
+            from sandbox_agent.clients import get_db_conninfo
+            import psycopg
+            norm = str(Path(path).resolve())
+            with psycopg.connect(get_db_conninfo(), autocommit=True) as conn:
+                with conn.cursor() as cur:
+                    cur.execute(
+                        "SELECT path FROM exported_files WHERE thread_key = %s AND session_id = %s",
+                        (thread_key, session_id),
+                    )
+                    rows = cur.fetchall()
+            for (p,) in rows:
+                if norm == p or norm.startswith(p.rstrip("/") + "/"):
+                    return True
+            return False
+        except Exception:
+            return False
 
     # ── Image Build ────────────────────────────────────
 
@@ -547,14 +628,16 @@ class SandboxManager:
         session_id: str,
         files: list[dict[str, str]],
     ) -> ImportResult:
-        """Copy files or directories from the host into the sandbox.
+        """Copy files or directories into the sandbox.
+
+        Each entry can be:
+        - Host file: ``{"source": "<host path>", "destination": "..."}``
+        - Cross-session: ``{"session_id": "<src_session>", "path": "<container path>", "destination": "..."}``
+          (file must have been exported from src_session in the same thread)
 
         Args:
-            session_id: Active session ID.
-            files: List of ``{"source": "<host path>", "destination": "<container path>"}``
-                mappings.  *destination* is relative to ``/workspace/`` when not
-                absolute.  If *destination* is omitted, the original file/folder
-                name is used.
+            session_id: Active session ID (destination).
+            files: List of file entries (see above).
 
         Returns:
             ImportResult with per-file status.
@@ -563,78 +646,224 @@ class SandboxManager:
         self._touch_session(session_id)
         self._assert_container_alive(session_id)
         info = self.sessions[session_id]
+        thread_key = current_thread_id.get(None) or f"__mcp__{session_id}"
 
         results: list[ImportFileResult] = []
         all_ok = True
 
         for entry in files:
+            src_session_id = entry.get("session_id")
+            src_path = entry.get("path", "")
             src = entry.get("source", "")
             dst = entry.get("destination", "")
 
-            if not src:
-                results.append(ImportFileResult(
-                    source=src, destination=dst, success=False,
-                    error="source is required",
-                ))
-                all_ok = False
-                continue
-
-            local_path = Path(src)
-            if not local_path.exists():
-                results.append(ImportFileResult(
-                    source=src, destination=dst, success=False,
-                    error=f"File or directory not found: {local_path}",
-                ))
-                all_ok = False
-                continue
-
-            if not dst:
-                dst = local_path.name
-
-            remote_path = dst if dst.startswith("/") else f"/workspace/{dst}"
-
-            try:
-                if local_path.is_file():
-                    size = local_path.stat().st_size
-                else:
-                    size = sum(f.stat().st_size for f in local_path.rglob("*") if f.is_file())
-
-                tar_buf = io.BytesIO()
-                with tarfile.open(fileobj=tar_buf, mode="w") as tar:
-                    tar.add(str(local_path), arcname=Path(remote_path).name)
-                tar_buf.seek(0)
-
-                dest_dir = str(Path(remote_path).parent)
-                proc = subprocess.run(
-                    [
-                        "docker", "exec", "-i", info.container_name,
-                        "tar", "xf", "-", "-C", dest_dir,
-                    ],
-                    input=tar_buf.read(),
-                    capture_output=True,
-                    timeout=120,
-                )
-
-                if proc.returncode != 0:
-                    err = proc.stderr.decode(errors="replace")[:500]
+            if src_session_id:
+                # Cross-session: copy from container src to container dst
+                try:
+                    src_path_norm = self._normalize_container_path(src_path)
+                except ValueError as exc:
                     results.append(ImportFileResult(
-                        source=src, destination=remote_path, success=False,
-                        error=f"tar extract failed: {err}",
+                        source=f"{src_session_id}:{src_path}",
+                        destination=dst or Path(src_path).name,
+                        success=False,
+                        error=str(exc),
                     ))
                     all_ok = False
                     continue
 
-                results.append(ImportFileResult(
-                    source=src, destination=remote_path,
-                    success=True, size=size,
-                ))
+                if not dst:
+                    dst = Path(src_path_norm).name
+                remote_path = dst if dst.startswith("/") else f"/workspace/{dst}"
 
-            except Exception as exc:
-                results.append(ImportFileResult(
-                    source=src, destination=remote_path, success=False,
-                    error=f"{type(exc).__name__}: {exc}",
-                ))
-                all_ok = False
+                # Validate src_session belongs to same thread
+                src_info = self.sessions.get(src_session_id)
+                if not src_info:
+                    results.append(ImportFileResult(
+                        source=f"{src_session_id}:{src_path_norm}",
+                        destination=remote_path,
+                        success=False,
+                        error=f"Source session '{src_session_id}' not found",
+                    ))
+                    all_ok = False
+                    continue
+
+                src_thread = src_info.thread_id or f"__mcp__{src_session_id}"
+                if src_thread != thread_key:
+                    results.append(ImportFileResult(
+                        source=f"{src_session_id}:{src_path_norm}",
+                        destination=remote_path,
+                        success=False,
+                        error="Source session belongs to another conversation",
+                    ))
+                    all_ok = False
+                    continue
+
+                if not self.is_file_exported(thread_key, src_session_id, src_path_norm):
+                    results.append(ImportFileResult(
+                        source=f"{src_session_id}:{src_path_norm}",
+                        destination=remote_path,
+                        success=False,
+                        error="File not exported from source session (use export_files first)",
+                    ))
+                    all_ok = False
+                    continue
+
+                try:
+                    src_container = src_info.container_name
+                    proc_tar = subprocess.Popen(
+                        [
+                            "docker", "exec", "-i", src_container,
+                            "tar", "cf", "-", "-C",
+                            str(Path(src_path_norm).parent),
+                            Path(src_path_norm).name,
+                        ],
+                        stdout=subprocess.PIPE,
+                        stderr=subprocess.PIPE,
+                    )
+                    proc_extract = subprocess.run(
+                        [
+                            "docker", "exec", "-i", info.container_name,
+                            "tar", "xf", "-", "-C", "/workspace",
+                        ],
+                        stdin=proc_tar.stdout,
+                        capture_output=True,
+                        timeout=120,
+                    )
+                    proc_tar.wait()
+                    if proc_tar.returncode != 0:
+                        err = (proc_tar.stderr.read() or b"").decode(errors="replace")[:500]
+                        results.append(ImportFileResult(
+                            source=f"{src_session_id}:{src_path_norm}",
+                            destination=remote_path,
+                            success=False,
+                            error=f"tar failed: {err}",
+                        ))
+                        all_ok = False
+                        continue
+                    if proc_extract.returncode != 0:
+                        err = proc_extract.stderr.decode(errors="replace")[:500]
+                        results.append(ImportFileResult(
+                            source=f"{src_session_id}:{src_path_norm}",
+                            destination=remote_path,
+                            success=False,
+                            error=f"tar extract failed: {err}",
+                        ))
+                        all_ok = False
+                        continue
+
+                    # Move to destination if it differs from extracted path
+                    extracted_name = Path(src_path_norm).name
+                    if remote_path != f"/workspace/{extracted_name}":
+                        dest_parent = str(Path(remote_path).parent)
+                        subprocess.run(
+                            ["docker", "exec", "-i", info.container_name, "mkdir", "-p", dest_parent],
+                            capture_output=True,
+                            timeout=10,
+                        )
+                        subprocess.run(
+                            [
+                                "docker", "exec", "-i", info.container_name,
+                                "mv", f"/workspace/{extracted_name}", remote_path,
+                            ],
+                            capture_output=True,
+                            timeout=10,
+                        )
+
+                    size = 0
+                    try:
+                        proc_du = subprocess.run(
+                            ["docker", "exec", "-i", info.container_name, "du", "-sb", remote_path],
+                            capture_output=True,
+                            text=True,
+                            timeout=10,
+                        )
+                        if proc_du.returncode == 0:
+                            parts = proc_du.stdout.strip().split()
+                            if parts and parts[0].isdigit():
+                                size = int(parts[0])
+                    except Exception:
+                        pass
+
+                    results.append(ImportFileResult(
+                        source=f"{src_session_id}:{src_path_norm}",
+                        destination=remote_path,
+                        success=True,
+                        size=size,
+                    ))
+                except Exception as exc:
+                    results.append(ImportFileResult(
+                        source=f"{src_session_id}:{src_path_norm}",
+                        destination=remote_path,
+                        success=False,
+                        error=f"{type(exc).__name__}: {exc}",
+                    ))
+                    all_ok = False
+            else:
+                # Host: copy from host path
+                if not src:
+                    results.append(ImportFileResult(
+                        source=src, destination=dst, success=False,
+                        error="source or (session_id, path) is required",
+                    ))
+                    all_ok = False
+                    continue
+
+                local_path = Path(src)
+                if not local_path.exists():
+                    results.append(ImportFileResult(
+                        source=src, destination=dst, success=False,
+                        error=f"File or directory not found: {local_path}",
+                    ))
+                    all_ok = False
+                    continue
+
+                if not dst:
+                    dst = local_path.name
+
+                remote_path = dst if dst.startswith("/") else f"/workspace/{dst}"
+
+                try:
+                    if local_path.is_file():
+                        size = local_path.stat().st_size
+                    else:
+                        size = sum(f.stat().st_size for f in local_path.rglob("*") if f.is_file())
+
+                    tar_buf = io.BytesIO()
+                    with tarfile.open(fileobj=tar_buf, mode="w") as tar:
+                        tar.add(str(local_path), arcname=Path(remote_path).name)
+                    tar_buf.seek(0)
+
+                    dest_dir = str(Path(remote_path).parent)
+                    proc = subprocess.run(
+                        [
+                            "docker", "exec", "-i", info.container_name,
+                            "tar", "xf", "-", "-C", dest_dir,
+                        ],
+                        input=tar_buf.read(),
+                        capture_output=True,
+                        timeout=120,
+                    )
+
+                    if proc.returncode != 0:
+                        err = proc.stderr.decode(errors="replace")[:500]
+                        results.append(ImportFileResult(
+                            source=src, destination=remote_path, success=False,
+                            error=f"tar extract failed: {err}",
+                        ))
+                        all_ok = False
+                        continue
+
+                    results.append(ImportFileResult(
+                        source=src, destination=remote_path,
+                        success=True, size=size,
+                    ))
+
+                except Exception as exc:
+                    results.append(ImportFileResult(
+                        source=src, destination=remote_path, success=False,
+                        error=f"{type(exc).__name__}: {exc}",
+                    ))
+                    all_ok = False
 
         return ImportResult(success=all_ok, files=results)
 
@@ -642,108 +871,200 @@ class SandboxManager:
         self,
         session_id: str,
         files: list[dict[str, str]],
-        output_dir: str | Path | None = None,
     ) -> ExportResult:
-        """Copy files/directories from the sandbox to the host filesystem.
+        """Register files as "released" for download and cross-session import.
+
+        Does NOT copy to host. Files become available via HTTP download endpoint
+        and import_files (cross-session) while thread_id and session_id exist.
 
         Args:
             session_id: Active session ID.
-            files: List of ``{"source": "<container path>", "destination": "<host path>"}``
-                mappings.  *source* is relative to ``/workspace/`` when not absolute.
-                *destination* is relative to *output_dir* when not absolute.
-            output_dir: Base directory on the host for relative destinations.
-                Defaults to ``Settings.STORAGE_DIR``.
+            files: List of ``{"source": "<container path>", "destination": "..."}``.
+                *source* is relative to ``/workspace/`` when not absolute.
+                *destination* is ignored (kept for API compatibility).
 
         Returns:
-            ExportResult with per-file status.
+            ExportResult with ExportFileResult(session_id, path, success, size, error).
+            path is always absolute (e.g. /workspace/file.png).
         """
         self._check_session(session_id)
         self._touch_session(session_id)
         self._assert_container_alive(session_id)
         info = self.sessions[session_id]
 
-        settings = get_settings()
-        root = Path(output_dir) if output_dir else Path(settings.STORAGE_DIR)
-        # STORAGE_DIR/thread_id/session_id when thread exists, else STORAGE_DIR/session_id
-        if info.thread_id:
-            base_dir = (root / info.thread_id / session_id).resolve()
-        else:
-            base_dir = (root / session_id).resolve()
-        base_dir.mkdir(parents=True, exist_ok=True)
+        thread_key = current_thread_id.get(None) or f"__mcp__{session_id}"
 
         results: list[ExportFileResult] = []
         all_ok = True
 
         for entry in files:
             src = entry.get("source", "")
-            dst = entry.get("destination", "")
 
             if not src:
                 results.append(ExportFileResult(
-                    source=src, destination=dst, success=False,
+                    session_id=session_id, path="", success=False,
                     error="source is required",
                 ))
                 all_ok = False
                 continue
 
-            container_path = src if src.startswith("/") else f"/workspace/{src}"
-
-            if not dst:
-                dst = Path(src).name
-            host_path = Path(dst) if Path(dst).is_absolute() else base_dir / dst
-            host_path = host_path.resolve()
+            try:
+                container_path = self._normalize_container_path(src)
+            except ValueError as exc:
+                results.append(ExportFileResult(
+                    session_id=session_id, path=src, success=False,
+                    error=str(exc),
+                ))
+                all_ok = False
+                continue
 
             try:
-                host_path.parent.mkdir(parents=True, exist_ok=True)
-
                 proc = subprocess.run(
-                    [
-                        "docker", "exec", "-i", info.container_name,
-                        "tar", "cf", "-", "-C", str(Path(container_path).parent),
-                        Path(container_path).name,
-                    ],
+                    ["docker", "exec", "-i", info.container_name, "test", "-e", container_path],
                     capture_output=True,
-                    timeout=120,
+                    timeout=10,
                 )
 
                 if proc.returncode != 0:
-                    err = proc.stderr.decode(errors="replace")[:500]
                     results.append(ExportFileResult(
-                        source=src, destination=str(host_path), success=False,
-                        error=f"tar failed: {err}",
+                        session_id=session_id, path=container_path, success=False,
+                        error="File or directory not found in container",
                     ))
                     all_ok = False
                     continue
 
-                tar_buf = io.BytesIO(proc.stdout)
-                with tarfile.open(fileobj=tar_buf, mode="r") as tar:
-                    members = tar.getmembers()
-                    if len(members) == 1 and members[0].isfile():
-                        member = members[0]
-                        member.name = host_path.name
-                        tar.extract(member, path=str(host_path.parent))
-                        size = host_path.stat().st_size
-                    else:
-                        host_path.mkdir(parents=True, exist_ok=True)
-                        tar.extractall(path=str(host_path))
-                        size = sum(
-                            f.stat().st_size
-                            for f in host_path.rglob("*") if f.is_file()
-                        )
+                size = 0
+                try:
+                    proc_size = subprocess.run(
+                        ["docker", "exec", "-i", info.container_name, "du", "-sb", container_path],
+                        capture_output=True,
+                        text=True,
+                        timeout=10,
+                    )
+                    if proc_size.returncode == 0:
+                        parts = proc_size.stdout.strip().split()
+                        if parts and parts[0].isdigit():
+                            size = int(parts[0])
+                except Exception:
+                    pass
+
+                with self._lock:
+                    self._exported_files.setdefault(thread_key, {}).setdefault(
+                        session_id, set()
+                    ).add(container_path)
+                self._db_add_exported(thread_key, session_id, container_path)
 
                 results.append(ExportFileResult(
-                    source=src, destination=str(host_path),
+                    session_id=session_id, path=container_path,
                     success=True, size=size,
                 ))
 
             except Exception as exc:
                 results.append(ExportFileResult(
-                    source=src, destination=str(host_path), success=False,
+                    session_id=session_id, path=container_path, success=False,
                     error=f"{type(exc).__name__}: {exc}",
                 ))
                 all_ok = False
 
         return ExportResult(success=all_ok, files=results)
+
+    def is_file_exported(self, thread_key: str, session_id: str, path: str) -> bool:
+        """Check if (session_id, path) is released for download (DB + in-memory)."""
+        if self._db_is_file_exported(thread_key, session_id, path):
+            return True
+        paths = self._exported_files.get(thread_key, {}).get(session_id, set())
+        norm = str(Path(path).resolve())
+        return any(
+            norm == p or norm.startswith(p.rstrip("/") + "/")
+            for p in paths
+        )
+
+    def is_exported_path_file(
+        self,
+        thread_id: str | None,
+        session_id: str,
+        path: str,
+    ) -> bool:
+        """Return True if path is a regular file (not directory) in the container."""
+        if not self.is_file_exported(
+            thread_id if thread_id else f"__mcp__{session_id}",
+            session_id,
+            path,
+        ):
+            return False
+        container_path = path if path.startswith("/") else f"/workspace/{path}"
+        container_path = self._normalize_container_path(container_path)
+        container_name = (
+            self.sessions[session_id].container_name
+            if session_id in self._containers
+            else f"sandbox-{session_id}"
+        )
+        return (
+            subprocess.run(
+                ["docker", "exec", "-i", container_name, "test", "-f", container_path],
+                capture_output=True,
+                timeout=10,
+            ).returncode
+            == 0
+        )
+
+    def stream_exported_file(
+        self,
+        thread_id: str | None,
+        session_id: str,
+        path: str,
+    ) -> Generator[bytes, None, None]:
+        """Stream bytes from file in container. Raises ValueError if not released."""
+        key = thread_id if thread_id else f"__mcp__{session_id}"
+        if not self.is_file_exported(key, session_id, path):
+            raise ValueError(f"File not exported: {session_id}:{path}")
+        container_path = path if path.startswith("/") else f"/workspace/{path}"
+        container_path = self._normalize_container_path(container_path)
+
+        container_name = (
+            self.sessions[session_id].container_name
+            if session_id in self._containers
+            else f"sandbox-{session_id}"
+        )
+
+        if session_id in self._containers:
+            self._check_session(session_id)
+
+        # Single file: stream raw bytes. Directory: stream tar.
+        is_file = subprocess.run(
+            ["docker", "exec", "-i", container_name, "test", "-f", container_path],
+            capture_output=True,
+            timeout=10,
+        ).returncode == 0
+
+        if is_file:
+            proc = subprocess.Popen(
+                ["docker", "exec", "-i", container_name, "cat", container_path],
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+            )
+        else:
+            proc = subprocess.Popen(
+                [
+                    "docker", "exec", "-i", container_name,
+                    "tar", "cf", "-", "-C", str(Path(container_path).parent),
+                    Path(container_path).name,
+                ],
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+            )
+        try:
+            chunk_size = 65536
+            while True:
+                chunk = proc.stdout.read(chunk_size)
+                if not chunk:
+                    break
+                yield chunk
+        finally:
+            proc.wait()
+            if proc.returncode != 0:
+                err = (proc.stderr.read() or b"").decode(errors="replace")
+                raise RuntimeError(f"docker exec failed: {err}")
 
     def stop_session(self, session_id: str) -> bool:
         with self._lock:
@@ -756,6 +1077,15 @@ class SandboxManager:
                     if not ts:
                         del self.thread_sessions[info.thread_id]
 
+            # Remove exported files registry for this session
+            if info:
+                thread_key = info.thread_id or f"__mcp__{session_id}"
+                if thread_key in self._exported_files:
+                    self._exported_files[thread_key].pop(session_id, None)
+                    if not self._exported_files[thread_key]:
+                        del self._exported_files[thread_key]
+                self._db_remove_exported_session(session_id)
+
         if container is None:
             return False
 
@@ -764,18 +1094,6 @@ class SandboxManager:
             container.remove(force=True)
         except Exception:
             pass
-
-        # Remove STORAGE_DIR/thread_id/session_id or STORAGE_DIR/session_id
-        root = Path(get_settings().STORAGE_DIR)
-        if info and info.thread_id:
-            session_dir = root / info.thread_id / session_id
-        else:
-            session_dir = root / session_id
-        if session_dir.exists():
-            try:
-                shutil.rmtree(session_dir, ignore_errors=True)
-            except Exception:
-                pass
 
         return True
 
@@ -788,6 +1106,10 @@ class SandboxManager:
         for sid in sids:
             if self.stop_session(sid):
                 count += 1
+
+        with self._lock:
+            self._exported_files.pop(thread_id, None)
+        self._db_remove_exported_thread(thread_id)
 
         # Remove STORAGE_DIR/thread_id/ (uploads + any session dirs)
         thread_dir = Path(get_settings().STORAGE_DIR) / thread_id
@@ -806,6 +1128,17 @@ class SandboxManager:
             self.stop_session(sid)
 
     # ── Internal ───────────────────────────────────────
+
+    def _normalize_container_path(self, path: str) -> str:
+        """Resolve path and ensure it is inside /workspace (prevents path traversal)."""
+        p = Path(path)
+        if not p.is_absolute():
+            p = Path("/workspace") / p
+        resolved = p.resolve()
+        workspace = Path("/workspace").resolve()
+        if not str(resolved).startswith(str(workspace)):
+            raise ValueError(f"Path outside /workspace: {path}")
+        return str(resolved)
 
     def _check_session(self, session_id: str) -> None:
         if session_id not in self._containers:

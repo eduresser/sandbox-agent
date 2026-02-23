@@ -86,6 +86,32 @@ class AegraClient:
         r.raise_for_status()
         return r.json()
 
+    def get_download_url(
+        self,
+        thread_id: str,
+        session_id: str,
+        path: str,
+    ) -> str:
+        """Return the URL to download an exported file (for use as link)."""
+        from urllib.parse import quote
+
+        encoded_path = quote(path, safe="")
+        return f"{self.base_url}/threads/{thread_id}/files/download?session_id={session_id}&path={encoded_path}"
+
+    def download_exported_file(
+        self,
+        thread_id: str,
+        session_id: str,
+        path: str,
+    ) -> bytes:
+        """Download a file exported from a sandbox session."""
+        r = self._client.get(
+            f"/threads/{thread_id}/files/download",
+            params={"session_id": session_id, "path": path},
+        )
+        r.raise_for_status()
+        return r.content
+
     # ── Runs (streaming) ────────────────────────────────
 
     def stream_run(

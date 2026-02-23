@@ -12,13 +12,11 @@ Run with: pytest tests/test_export_files.py -v
 from __future__ import annotations
 
 import json
-import shutil
-import tempfile
 from pathlib import Path
 
 import pytest
 
-from sandbox_agent.sandbox.manager import SandboxManager
+from sandbox_agent.sandbox.manager import SandboxManager, current_thread_id
 from sandbox_agent.sandbox.models import ExportFileResult, ExportResult
 from sandbox_agent.tools import create_tools
 
@@ -53,13 +51,6 @@ def python_session(manager: SandboxManager):
     manager.stop_session(info.session_id)
 
 
-@pytest.fixture()
-def output_dir():
-    d = Path(tempfile.mkdtemp(prefix="sandbox_export_test_"))
-    yield d
-    shutil.rmtree(d, ignore_errors=True)
-
-
 def _create_file_in_sandbox(manager: SandboxManager, session_id: str, name: str, content: str):
     """Helper: create a file inside /workspace/ via execute_terminal."""
     escaped = content.replace("'", "'\\''")
@@ -70,13 +61,12 @@ def _create_file_in_sandbox(manager: SandboxManager, session_id: str, name: str,
 
 
 class TestExportFilesManager:
-    def test_export_single_file(self, manager, python_session, output_dir):
+    def test_export_single_file(self, manager, python_session):
         _create_file_in_sandbox(manager, python_session, "hello.txt", "hello world")
 
         result = manager.export_files(
             python_session,
             [{"source": "hello.txt", "destination": "hello.txt"}],
-            output_dir=str(output_dir),
         )
 
         assert isinstance(result, ExportResult)
@@ -86,11 +76,17 @@ class TestExportFilesManager:
         fr = result.files[0]
         assert isinstance(fr, ExportFileResult)
         assert fr.success is True
+        assert fr.session_id == python_session
+        assert fr.path == "/workspace/hello.txt"
         assert fr.size > 0
-        assert Path(fr.destination).exists()
-        assert "hello world" in Path(fr.destination).read_text()
 
-    def test_export_multiple_files(self, manager, python_session, output_dir):
+        # Verify file is in _exported_files and streamable
+        thread_key = f"__mcp__{python_session}"
+        assert manager.is_file_exported(thread_key, python_session, fr.path)
+        content = b"".join(manager.stream_exported_file(None, python_session, fr.path))
+        assert b"hello world" in content
+
+    def test_export_multiple_files(self, manager, python_session):
         _create_file_in_sandbox(manager, python_session, "a.txt", "aaa")
         _create_file_in_sandbox(manager, python_session, "b.txt", "bbb")
 
@@ -100,70 +96,33 @@ class TestExportFilesManager:
                 {"source": "a.txt", "destination": "a.txt"},
                 {"source": "b.txt", "destination": "b.txt"},
             ],
-            output_dir=str(output_dir),
         )
 
         assert result.success is True
         assert len(result.files) == 2
         assert all(f.success for f in result.files)
+        paths = {f.path for f in result.files}
+        assert "/workspace/a.txt" in paths
+        assert "/workspace/b.txt" in paths
 
-        session_dir = output_dir / python_session
-        assert (session_dir / "a.txt").exists()
-        assert (session_dir / "b.txt").exists()
+        thread_key = f"__mcp__{python_session}"
+        assert manager.is_file_exported(thread_key, python_session, "/workspace/a.txt")
+        assert manager.is_file_exported(thread_key, python_session, "/workspace/b.txt")
 
-    def test_export_with_subdirectory_destination(self, manager, python_session, output_dir):
-        _create_file_in_sandbox(manager, python_session, "data.csv", "a,b,c")
-
-        result = manager.export_files(
-            python_session,
-            [{"source": "data.csv", "destination": "subdir/data.csv"}],
-            output_dir=str(output_dir),
-        )
-
-        assert result.success is True
-        exported = Path(result.files[0].destination)
-        assert exported.exists()
-        assert "a,b,c" in exported.read_text()
-
-    def test_export_absolute_source(self, manager, python_session, output_dir):
+    def test_export_absolute_source(self, manager, python_session):
         _create_file_in_sandbox(manager, python_session, "abs.txt", "absolute")
 
         result = manager.export_files(
             python_session,
             [{"source": "/workspace/abs.txt", "destination": "abs.txt"}],
-            output_dir=str(output_dir),
         )
 
         assert result.success is True
-        assert "absolute" in Path(result.files[0].destination).read_text()
+        assert result.files[0].path == "/workspace/abs.txt"
+        content = b"".join(manager.stream_exported_file(None, python_session, "/workspace/abs.txt"))
+        assert b"absolute" in content
 
-    def test_export_absolute_destination(self, manager, python_session, output_dir):
-        _create_file_in_sandbox(manager, python_session, "out.txt", "dest_abs")
-
-        abs_dest = str(output_dir / "custom" / "out.txt")
-        result = manager.export_files(
-            python_session,
-            [{"source": "out.txt", "destination": abs_dest}],
-            output_dir=str(output_dir),
-        )
-
-        assert result.success is True
-        assert Path(abs_dest).exists()
-        assert "dest_abs" in Path(abs_dest).read_text()
-
-    def test_export_default_destination_uses_filename(self, manager, python_session, output_dir):
-        _create_file_in_sandbox(manager, python_session, "auto.txt", "auto")
-
-        result = manager.export_files(
-            python_session,
-            [{"source": "auto.txt", "destination": ""}],
-            output_dir=str(output_dir),
-        )
-
-        assert result.success is True
-        assert (output_dir / python_session / "auto.txt").exists()
-
-    def test_export_nonexistent_file_partial_failure(self, manager, python_session, output_dir):
+    def test_export_nonexistent_file_partial_failure(self, manager, python_session):
         _create_file_in_sandbox(manager, python_session, "good.txt", "ok")
 
         result = manager.export_files(
@@ -172,7 +131,6 @@ class TestExportFilesManager:
                 {"source": "good.txt", "destination": "good.txt"},
                 {"source": "nonexistent.xyz", "destination": "nope.xyz"},
             ],
-            output_dir=str(output_dir),
         )
 
         assert result.success is False
@@ -180,18 +138,17 @@ class TestExportFilesManager:
         assert result.files[1].success is False
         assert result.files[1].error
 
-    def test_export_empty_source_error(self, manager, python_session, output_dir):
+    def test_export_empty_source_error(self, manager, python_session):
         result = manager.export_files(
             python_session,
             [{"source": "", "destination": "x.txt"}],
-            output_dir=str(output_dir),
         )
 
         assert result.success is False
         assert result.files[0].success is False
         assert "source is required" in result.files[0].error
 
-    def test_export_directory(self, manager, python_session, output_dir):
+    def test_export_directory(self, manager, python_session):
         manager.execute_terminal(python_session, "mkdir -p /workspace/mydir")
         _create_file_in_sandbox(manager, python_session, "mydir/f1.txt", "file1")
         _create_file_in_sandbox(manager, python_session, "mydir/f2.txt", "file2")
@@ -199,97 +156,61 @@ class TestExportFilesManager:
         result = manager.export_files(
             python_session,
             [{"source": "mydir", "destination": "mydir"}],
-            output_dir=str(output_dir),
         )
 
         assert result.success is True
-        exported_dir = output_dir / python_session / "mydir"
-        assert exported_dir.is_dir()
-        child_names = {f.name for f in exported_dir.rglob("*") if f.is_file()}
-        assert "f1.txt" in child_names
-        assert "f2.txt" in child_names
+        assert result.files[0].path == "/workspace/mydir"
+        content = b"".join(manager.stream_exported_file(None, python_session, "/workspace/mydir"))
+        assert b"file1" in content
+        assert b"file2" in content
 
-    def test_export_creates_session_subdirectory(self, manager, python_session, output_dir):
-        _create_file_in_sandbox(manager, python_session, "sid.txt", "session dir test")
-
+    def test_export_path_traversal_rejected(self, manager, python_session):
         result = manager.export_files(
             python_session,
-            [{"source": "sid.txt", "destination": "sid.txt"}],
-            output_dir=str(output_dir),
+            [{"source": "/workspace/../etc/passwd", "destination": "x"}],
         )
+        assert result.success is False
+        assert "outside /workspace" in result.files[0].error
 
-        assert result.success is True
-        session_dir = output_dir / python_session
-        assert session_dir.is_dir()
-        assert (session_dir / "sid.txt").exists()
-        assert "session dir test" in (session_dir / "sid.txt").read_text()
-
-    def test_export_invalid_session(self, manager, output_dir):
+    def test_export_invalid_session(self, manager):
         with pytest.raises(ValueError, match="not found"):
             manager.export_files(
                 "nonexistent_id",
                 [{"source": "x", "destination": "x"}],
-                output_dir=str(output_dir),
             )
 
-    def test_stop_session_removes_exported_files(self, manager, output_dir):
-        """stop_session cleans up STORAGE_DIR/<session_id>/ (or thread_id/session_id) to avoid accumulation."""
-        from sandbox_agent.settings import get_settings
-
+    def test_stop_session_removes_exported_files(self, manager):
+        """stop_session removes session from _exported_files."""
         info = manager.create_session(runtime="python")
         sid = info.session_id
-        settings = get_settings()
-        original = settings.STORAGE_DIR
-        settings.STORAGE_DIR = str(output_dir)
-        try:
-            _create_file_in_sandbox(manager, sid, "cleanup_test.txt", "to be removed")
+        _create_file_in_sandbox(manager, sid, "cleanup_test.txt", "to be removed")
 
-            manager.export_files(
-                sid,
-                [{"source": "cleanup_test.txt", "destination": "cleanup_test.txt"}],
-            )
+        manager.export_files(sid, [{"source": "cleanup_test.txt"}])
 
-            # No thread_id: flat STORAGE_DIR/session_id
-            session_dir = output_dir / sid
-            assert (session_dir / "cleanup_test.txt").exists()
+        thread_key = f"__mcp__{sid}"
+        assert manager.is_file_exported(thread_key, sid, "/workspace/cleanup_test.txt")
 
-            manager.stop_session(sid)
+        manager.stop_session(sid)
 
-            # After stop_session, exported files for this session should be removed
-            assert not session_dir.exists()
-        finally:
-            settings.STORAGE_DIR = original
+        assert not manager.is_file_exported(thread_key, sid, "/workspace/cleanup_test.txt")
 
-    def test_cleanup_thread_sessions_removes_thread_dir(self, manager, output_dir):
-        """cleanup_thread_sessions removes STORAGE_DIR/<thread_id>/ (uploads + session dirs)."""
-        from sandbox_agent.settings import get_settings
-        from sandbox_agent.sandbox.manager import current_thread_id
-
-        settings = get_settings()
-        original = settings.STORAGE_DIR
-        settings.STORAGE_DIR = str(output_dir)
+    def test_cleanup_thread_sessions_removes_exported_files(self, manager):
+        """cleanup_thread_sessions removes _exported_files for the thread."""
+        settings = __import__("sandbox_agent.settings", fromlist=["get_settings"]).get_settings()
         token = current_thread_id.set("test_thread_cleanup")
         try:
             info = manager.create_session(runtime="python")
             sid = info.session_id
             _create_file_in_sandbox(manager, sid, "thread_cleanup.txt", "to be removed")
-            manager.export_files(sid, [{"source": "thread_cleanup.txt", "destination": "thread_cleanup.txt"}])
+            manager.export_files(sid, [{"source": "thread_cleanup.txt"}])
 
-            # Simulate frontend upload at STORAGE_DIR/thread_id/uploads/
-            thread_dir = output_dir / "test_thread_cleanup"
-            (thread_dir / "uploads" / "uploaded.csv").parent.mkdir(parents=True, exist_ok=True)
-            (thread_dir / "uploads" / "uploaded.csv").write_text("uploaded,data")
-            session_dir = thread_dir / sid
-            assert (session_dir / "thread_cleanup.txt").exists()
-            assert (thread_dir / "uploads" / "uploaded.csv").exists()
+            assert manager.is_file_exported("test_thread_cleanup", sid, "/workspace/thread_cleanup.txt")
 
             manager.cleanup_thread_sessions("test_thread_cleanup")
 
-            # Entire thread dir (uploads + session subdirs) should be removed
-            assert not thread_dir.exists()
+            assert not manager.is_file_exported("test_thread_cleanup", sid, "/workspace/thread_cleanup.txt")
         finally:
             current_thread_id.reset(token)
-            settings.STORAGE_DIR = original
 
 
 # ── LangChain tool-level tests ────────────────────────────────
@@ -311,53 +232,40 @@ class TestExportFilesTool:
         assert tools["export_files"].description
 
     def test_tool_full_workflow(self, tools, class_manager):
-        out_dir = Path(tempfile.mkdtemp(prefix="sandbox_tool_export_"))
+        create = tools["create_session"]
+        execute_terminal = tools["execute_terminal"]
+        export = tools["export_files"]
+        stop = tools["stop_session"]
+
+        r = json.loads(create.invoke({"language": "python"}))
+        sid = r["session_id"]
+
         try:
-            create = tools["create_session"]
-            execute_terminal = tools["execute_terminal"]
-            export = tools["export_files"]
-            stop = tools["stop_session"]
+            json.loads(execute_terminal.invoke({
+                "session_id": sid,
+                "command": "echo 'tool_export_test' > /workspace/tool_file.txt",
+            }))
 
-            r = json.loads(create.invoke({"language": "python"}))
-            sid = r["session_id"]
+            r = json.loads(export.invoke({
+                "session_id": sid,
+                "files": [{"source": "tool_file.txt", "destination": "tool_file.txt"}],
+            }))
 
-            try:
-                json.loads(execute_terminal.invoke({
-                    "session_id": sid,
-                    "command": f"echo 'tool_export_test' > /workspace/tool_file.txt",
-                }))
-
-                # Temporarily patch STORAGE_DIR for this test
-                from sandbox_agent.settings import get_settings
-                settings = get_settings()
-                original = settings.STORAGE_DIR
-                settings.STORAGE_DIR = str(out_dir)
-
-                try:
-                    r = json.loads(export.invoke({
-                        "session_id": sid,
-                        "files": [{"source": "tool_file.txt", "destination": "tool_file.txt"}],
-                    }))
-                finally:
-                    settings.STORAGE_DIR = original
-
-                assert r["success"] is True
-                assert len(r["files"]) == 1
-                assert r["files"][0]["success"] is True
-                assert (out_dir / sid / "tool_file.txt").exists()
-
-            finally:
-                json.loads(stop.invoke({"session_id": sid}))
-
+            assert r["success"] is True
+            assert len(r["files"]) == 1
+            assert r["files"][0]["success"] is True
+            assert r["files"][0]["session_id"] == sid
+            assert "path" in r["files"][0]
+            assert "tool_file.txt" in r["files"][0]["path"]
         finally:
-            shutil.rmtree(out_dir, ignore_errors=True)
+            json.loads(stop.invoke({"session_id": sid}))
 
 
 # ── MCP tool-level tests ──────────────────────────────────────
 
 
 class TestExportFilesMCP:
-    def test_mcp_export(self, manager, python_session, output_dir):
+    def test_mcp_export(self, manager, python_session):
         """Test the MCP export_files function directly (not via MCP transport)."""
         _create_file_in_sandbox(manager, python_session, "mcp_test.txt", "mcp_data")
 
@@ -370,7 +278,6 @@ class TestExportFilesMCP:
             result = mcp_server.export_files(
                 session_id=python_session,
                 files=[{"source": "mcp_test.txt", "destination": "mcp_test.txt"}],
-                output_dir=str(output_dir),
             )
         finally:
             mcp_server._get_manager = original_get
@@ -378,11 +285,14 @@ class TestExportFilesMCP:
         assert result["success"] is True
         assert len(result["files"]) == 1
         assert result["files"][0]["success"] is True
-        assert (output_dir / python_session / "mcp_test.txt").exists()
-        assert "mcp_data" in (output_dir / python_session / "mcp_test.txt").read_text()
+        assert result["files"][0]["session_id"] == python_session
+        assert result["files"][0]["path"] == "/workspace/mcp_test.txt"
 
-    def test_mcp_export_returns_mappings(self, manager, python_session, output_dir):
-        """Verify the output includes source/destination mappings usable for cross-session transfer."""
+        content = b"".join(manager.stream_exported_file(None, python_session, "/workspace/mcp_test.txt"))
+        assert b"mcp_data" in content
+
+    def test_mcp_export_returns_session_id_and_path(self, manager, python_session):
+        """Verify the output includes session_id and path for cross-session transfer."""
         _create_file_in_sandbox(manager, python_session, "transfer.csv", "1,2,3")
 
         from sandbox_agent import mcp_server
@@ -394,12 +304,12 @@ class TestExportFilesMCP:
             result = mcp_server.export_files(
                 session_id=python_session,
                 files=[{"source": "transfer.csv", "destination": "transfer.csv"}],
-                output_dir=str(output_dir),
             )
         finally:
             mcp_server._get_manager = original_get
 
         file_entry = result["files"][0]
-        assert "source" in file_entry
-        assert "destination" in file_entry
-        assert Path(file_entry["destination"]).is_absolute()
+        assert "session_id" in file_entry
+        assert "path" in file_entry
+        assert file_entry["session_id"] == python_session
+        assert "/workspace/transfer.csv" in file_entry["path"]

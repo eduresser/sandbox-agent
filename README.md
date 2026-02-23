@@ -16,9 +16,9 @@ LangGraph agent with Docker-based sandboxed code execution. Each session runs in
 - **Runtime package install** — `pip install` / `npm install` / `install.packages()` / `Pkg.add()` at session creation or via terminal
 - **6 tools** — create_session, execute_code, execute_terminal, import_files, export_files, stop_session
 - **MCP server** — expose the same tools via Model Context Protocol (stdio transport)
-- **File export** — export files and directories from sandboxes to the host (`STORAGE_DIR/<thread_id>/<session_id>/` or `STORAGE_DIR/<session_id>/` for MCP)
-- **File import** — import files and directories from the host into sandboxes, including entire folder trees
-- **Cross-session transfer** — export from one session and import into another using the returned host paths
+- **File export** — register files for download (no host copy); download via API or use in cross-session import
+- **File import** — import from host paths or from another session (files exported in same conversation)
+- **Cross-session transfer** — export from session A, import into session B with `{session_id, path}`
 - **Auto-cleanup** — all containers are stopped and removed when the agent exits
 
 ## Prerequisites
@@ -89,7 +89,7 @@ Add the following MCP config:
 
 (Alternative: `sandbox-agent-mcp` still works for backward compatibility.)
 
-The MCP server exposes the same 6 tools as the CLI agent. The `import_files` tool accepts file content directly (as text or base64 via `file_content`/`encoding` keys) or host paths (via `source`/`destination` keys), since MCP clients don't always share a filesystem with the server. The `export_files` tool accepts an optional `output_dir` override.
+The MCP server exposes the same 6 tools as the CLI agent. The `import_files` tool accepts file content directly (as text or base64 via `file_content`/`encoding` keys), host paths (via `source`/`destination`), or cross-session references (`session_id`+`path`). The `export_files` tool registers files for download via `GET /files/download?session_id=...&path=...`.
 
 ### Aegra (REST API)
 
@@ -140,41 +140,35 @@ print(r1.stdout)
 r2 = manager.execute_code(sid, "df.shape")
 print(r2.result)
 
-# Export files from the sandbox to the host
+# Export files from the sandbox (registers for download, no host copy)
 manager.execute_code(sid, "df.to_csv('/workspace/output.csv', index=False)")
-export = manager.export_files(sid, [
-    {"source": "output.csv", "destination": "output.csv"},
-])
-print(export.files[0].destination)  # ./storage/<thread_id>/<session_id>/output.csv
+export = manager.export_files(sid, [{"source": "output.csv"}])
+print(export.files[0].session_id, export.files[0].path)  # session_id, /workspace/output.csv
 
 manager.stop_session(sid)
 ```
 
 #### Exporting Files
 
-`export_files` copies files and directories from the sandbox to the host. Files are organized under `STORAGE_DIR/<thread_id>/<session_id>/` (or `STORAGE_DIR/<session_id>/` when no thread context, e.g. MCP):
+`export_files` registers files for download and cross-session import (no host copy). Files become available via the API (`GET /threads/{thread_id}/files/download?session_id=...&path=...`) and for `import_files` in other sessions:
 
 ```python
 # Export a single file
-result = manager.export_files(sid, [
-    {"source": "report.pdf", "destination": "report.pdf"},
-])
+result = manager.export_files(sid, [{"source": "report.pdf"}])
 
 # Export an entire directory
-result = manager.export_files(sid, [
-    {"source": "results/", "destination": "results/"},
-])
+result = manager.export_files(sid, [{"source": "results/"}])
 
 # Export multiple files at once
 result = manager.export_files(sid, [
-    {"source": "data.csv", "destination": "data.csv"},
-    {"source": "chart.png", "destination": "charts/chart.png"},
-    {"source": "/workspace/logs/", "destination": "logs/"},
+    {"source": "data.csv"},
+    {"source": "chart.png"},
+    {"source": "/workspace/logs/"},
 ])
 
-# The result contains absolute host paths for each file
+# The result contains session_id and path (container path) for each file
 for f in result.files:
-    print(f"{f.source} -> {f.destination} ({'OK' if f.success else f.error})")
+    print(f"{f.session_id}:{f.path} ({'OK' if f.success else f.error})")
 ```
 
 #### Cross-Session File Transfer
@@ -189,34 +183,29 @@ import pandas as pd
 df = pd.DataFrame({'x': [1,2,3], 'y': [4,5,6]})
 df.to_csv('/workspace/data.csv', index=False)
 """)
-export = manager.export_files(sid_a, [{"source": "data.csv", "destination": "data.csv"}])
-host_path = export.files[0].destination  # absolute path on host
+export = manager.export_files(sid_a, [{"source": "data.csv"}])
+path = export.files[0].path  # /workspace/data.csv
 
-# Session B (R): consume the same data
+# Session B (R): consume the same data (cross-session import)
 sid_b = manager.create_session(runtime="r", dependencies={"readr": ""}).session_id
-manager.import_files(sid_b, [{"source": host_path, "destination": "data.csv"}])
+manager.import_files(sid_b, [{"session_id": sid_a, "path": path, "destination": "data.csv"}])
 manager.execute_code(sid_b, 'df <- readr::read_csv("/workspace/data.csv"); summary(df)')
 ```
 
 #### Importing Files and Directories
 
-`import_files` copies files and directories from the host into the sandbox:
+`import_files` copies files into the sandbox from the host or from another session:
 
 ```python
-# Import a single file
+# Import from host
 result = manager.import_files(sid, [
     {"source": "/home/user/data.csv", "destination": "data.csv"},
-])
-
-# Import an entire directory (tree is preserved)
-result = manager.import_files(sid, [
     {"source": "/home/user/project/", "destination": "project/"},
 ])
 
-# Import multiple items at once
+# Import from another session (cross-session, file must have been exported first)
 result = manager.import_files(sid, [
-    {"source": "/home/user/config.json", "destination": "config.json"},
-    {"source": "/home/user/assets/", "destination": "assets/"},
+    {"session_id": "abc123", "path": "/workspace/out.csv", "destination": "out.csv"},
 ])
 ```
 
@@ -287,7 +276,7 @@ MAX_SESSIONS=5                       # Maximum concurrent sandbox sessions
 TERMINAL_ROOT=False                  # Run terminal commands as root
 
 # Storage
-STORAGE_DIR=./storage                # Base dir: STORAGE_DIR/<thread_id>/uploads/ for uploads, STORAGE_DIR/<thread_id>/<session_id>/ for exports
+STORAGE_DIR=./storage                # Base dir: STORAGE_DIR/<thread_id>/uploads/ for uploads (exports use API download)
 
 # Output truncation limits (characters)
 MAX_STDOUT_CHARS=20000
