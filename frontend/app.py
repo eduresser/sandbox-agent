@@ -84,7 +84,7 @@ st.markdown(
         flex: unset !important;
         display: block !important;
     }
-    /* Tool block: unified input+output with colored border */
+    /* Tool block: unified input+output */
     .tool-block {
         border-radius: 0.5rem;
         padding: 0.75rem 1rem;
@@ -516,7 +516,11 @@ def _render_b64_image(url: str) -> None:
         st.image(url)
 
 
-def _render_tool_block(block: dict, sessions: dict[str, str] | None = None, key_suffix: str = "") -> None:
+def _render_tool_block(
+    block: dict,
+    sessions: dict[str, str] | None = None,
+    key_suffix: str = "",
+) -> None:
     """Render a unified tool block (input + output) with CLI-style formatting.
 
     sessions: optional dict mapping session_id -> runtime for execute_code
@@ -531,14 +535,64 @@ def _render_tool_block(block: dict, sessions: dict[str, str] | None = None, key_
         {"name": name, "args": args}, sessions=sessions
     )
 
-    # Determine border color: yellow (pending), green (ok), red (error)
+    # Status label for expander title
     if output is None:
-        border_color = "#b8860b"  # yellow/darkgoldenrod
         status_label = "Running..."
     else:
         _, is_error = format_tool_output_display(output, name)
-        border_color = "#dc3545" if is_error else "#28a745"  # red / green
         status_label = "ERROR" if is_error else "OK"
+
+    def _render_content() -> None:
+        """Inner content: input + output in same block."""
+        st.markdown('<div class="tool-block-input"><strong>Input</strong></div>', unsafe_allow_html=True)
+        st.code(input_text, language=input_lang)
+        st.markdown('<div class="tool-block-output"><strong>Output</strong></div>', unsafe_allow_html=True)
+
+    # Build a fake message dict for parse_tool_message when we have output
+    if output is not None and name in ("import_files", "export_files", "create_session", "stop_session"):
+        fake_msg = {"name": name, "content": output}
+        parsed = parse_tool_message(fake_msg)
+
+    def _content_import_export() -> None:
+        _render_content()
+        _render_file_results(
+            parsed,
+            thread_id=st.session_state.thread_id,
+            client=client,
+            key_suffix=key_suffix,
+        )
+
+    def _content_create_session() -> None:
+        _render_content()
+        info = parsed.session_info
+        sid = info.get("session_id", "")
+        runtime = info.get("runtime", "")
+        status = info.get("status", "")
+        icon = "\U0001f7e2" if status == "running" else "\U0001f7e1"
+        st.info(f"{icon} Session `{sid}` ({runtime}) - {status}")
+
+    def _content_stop_session() -> None:
+        _render_content()
+        sid = parsed.session_info.get("session_id", "")
+        st.warning(f"\U0001f534 Session `{sid}` stopped")
+
+    def _content_figures() -> None:
+        _render_content()
+        if parsed.text_summary:
+            st.markdown(parsed.text_summary)
+        for fig_b64 in parsed.figures_b64:
+            st.image(decode_b64_image(fig_b64))
+
+    def _content_generic() -> None:
+        _render_content()
+        if output is None:
+            st.caption("\u23f3 Running...")
+        else:
+            formatted, _ = format_tool_output_display(output, name)
+            st.code(formatted, language="json")
+            parsed_out = parse_tool_message({"name": name, "content": output})
+            for fig_b64 in parsed_out.figures_b64:
+                st.image(decode_b64_image(fig_b64))
 
     # Build a fake message dict for parse_tool_message when we have output
     if output is not None and name in ("import_files", "export_files", "create_session", "stop_session"):
@@ -546,94 +600,28 @@ def _render_tool_block(block: dict, sessions: dict[str, str] | None = None, key_
         parsed = parse_tool_message(fake_msg)
 
         if name in ("import_files", "export_files") and parsed.file_results:
-            with st.container():
-                st.markdown(
-                    f'<div class="tool-block" style="border-left: 4px solid {border_color}">'
-                    f'<div class="tool-block-title">\U0001f527 {name}</div>'
-                    f'<div class="tool-block-input"><strong>Input</strong></div>'
-                    f'</div>',
-                    unsafe_allow_html=True,
-                )
-                st.code(input_text, language=input_lang)
-                st.markdown('<div class="tool-block-output"><strong>Output</strong></div>', unsafe_allow_html=True)
-                _render_file_results(
-                    parsed,
-                    thread_id=st.session_state.thread_id,
-                    client=client,
-                    key_suffix=key_suffix,
-                )
+            with st.expander(f"\U0001f527 {name} — {status_label}", expanded=True):
+                _content_import_export()
             return
 
         if name == "create_session" and parsed.session_info:
-            info = parsed.session_info
-            sid = info.get("session_id", "")
-            runtime = info.get("runtime", "")
-            status = info.get("status", "")
-            icon = "\U0001f7e2" if status == "running" else "\U0001f7e1"
-            with st.container():
-                st.markdown(
-                    f'<div class="tool-block" style="border-left: 4px solid {border_color}">'
-                    f'<div class="tool-block-title">\U0001f527 {name}</div>'
-                    f'<div class="tool-block-input"><strong>Input</strong></div>'
-                    f'</div>',
-                    unsafe_allow_html=True,
-                )
-                st.code(input_text, language=input_lang)
-                st.markdown('<div class="tool-block-output"><strong>Output</strong></div>', unsafe_allow_html=True)
-                st.info(f"{icon} Session `{sid}` ({runtime}) - {status}")
+            with st.expander(f"\U0001f527 {name} — {status_label}", expanded=True):
+                _content_create_session()
             return
 
         if name == "stop_session" and parsed.session_info:
-            sid = parsed.session_info.get("session_id", "")
-            with st.container():
-                st.markdown(
-                    f'<div class="tool-block" style="border-left: 4px solid {border_color}">'
-                    f'<div class="tool-block-title">\U0001f527 {name}</div>'
-                    f'<div class="tool-block-input"><strong>Input</strong></div>'
-                    f'</div>',
-                    unsafe_allow_html=True,
-                )
-                st.code(input_text, language=input_lang)
-                st.markdown('<div class="tool-block-output"><strong>Output</strong></div>', unsafe_allow_html=True)
-                st.warning(f"\U0001f534 Session `{sid}` stopped")
+            with st.expander(f"\U0001f527 {name} — {status_label}", expanded=True):
+                _content_stop_session()
             return
 
         if parsed.figures_b64:
-            with st.container():
-                st.markdown(
-                    f'<div class="tool-block" style="border-left: 4px solid {border_color}">'
-                    f'<div class="tool-block-title">\U0001f527 {name} — {status_label}</div>'
-                    f'<div class="tool-block-input"><strong>Input</strong></div>'
-                    f'</div>',
-                    unsafe_allow_html=True,
-                )
-                st.code(input_text, language=input_lang)
-                st.markdown('<div class="tool-block-output"><strong>Output</strong></div>', unsafe_allow_html=True)
-                if parsed.text_summary:
-                    st.markdown(parsed.text_summary)
-                for fig_b64 in parsed.figures_b64:
-                    st.image(decode_b64_image(fig_b64))
+            with st.expander(f"\U0001f527 {name} — {status_label}", expanded=True):
+                _content_figures()
             return
 
     # Generic output: formatted JSON/text + figures (e.g. execute_code matplotlib/ggplot)
-    with st.container():
-        st.markdown(
-            f'<div class="tool-block" style="border-left: 4px solid {border_color}">'
-            f'<div class="tool-block-title">\U0001f527 {name} — {status_label}</div>'
-            f'<div class="tool-block-input"><strong>Input</strong></div>'
-            f'</div>',
-            unsafe_allow_html=True,
-        )
-        st.code(input_text, language=input_lang)
-        st.markdown('<div class="tool-block-output"><strong>Output</strong></div>', unsafe_allow_html=True)
-        if output is None:
-            st.caption("\u23f3 Running...")
-        else:
-            formatted, _ = format_tool_output_display(output, name)
-            st.code(formatted, language="json")
-            parsed = parse_tool_message({"name": name, "content": output})
-            for fig_b64 in parsed.figures_b64:
-                st.image(decode_b64_image(fig_b64))
+    with st.expander(f"\U0001f527 {name} — {status_label}", expanded=True):
+        _content_generic()
 
 
 def _render_file_results(
@@ -800,7 +788,11 @@ if prompt is not None:
                                     if item.get("type") == "thought":
                                         _render_thought_block(item.get("text", ""))
                                     elif item.get("type") == "block":
-                                        _render_tool_block(item["block"], sessions=sessions_map, key_suffix=f"_s{_render_iter}")
+                                        _render_tool_block(
+                                            item["block"],
+                                            sessions=sessions_map,
+                                            key_suffix=f"_s{_render_iter}",
+                                        )
                                 if final_content:
                                     with st.chat_message("assistant"):
                                         st.markdown(final_content)
