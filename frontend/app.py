@@ -477,11 +477,19 @@ def _render_messages(messages: list[dict]) -> None:
 
         items, final_content = collect_tool_blocks(assistant_msgs)
 
-        for item in items:
+        last_block_idx = next(
+            (i for i in range(len(items) - 1, -1, -1) if items[i].get("type") == "block"),
+            -1,
+        )
+        for idx, item in enumerate(items):
             if item.get("type") == "thought":
                 _render_thought_block(item.get("text", ""))
             elif item.get("type") == "block":
-                _render_tool_block(item["block"], sessions=sessions_map)
+                _render_tool_block(
+                    item["block"],
+                    sessions=sessions_map,
+                    expanded=(idx == last_block_idx),
+                )
 
         if final_content or assistant_msgs:
             last_ai = None
@@ -520,6 +528,7 @@ def _render_tool_block(
     block: dict,
     sessions: dict[str, str] | None = None,
     key_suffix: str = "",
+    expanded: bool = False,
 ) -> None:
     """Render a unified tool block (input + output) with CLI-style formatting.
 
@@ -600,27 +609,27 @@ def _render_tool_block(
         parsed = parse_tool_message(fake_msg)
 
         if name in ("import_files", "export_files") and parsed.file_results:
-            with st.expander(f"\U0001f527 {name} — {status_label}", expanded=True):
+            with st.expander(f"\U0001f527 {name} — {status_label}", expanded=expanded):
                 _content_import_export()
             return
 
         if name == "create_session" and parsed.session_info:
-            with st.expander(f"\U0001f527 {name} — {status_label}", expanded=True):
+            with st.expander(f"\U0001f527 {name} — {status_label}", expanded=expanded):
                 _content_create_session()
             return
 
         if name == "stop_session" and parsed.session_info:
-            with st.expander(f"\U0001f527 {name} — {status_label}", expanded=True):
+            with st.expander(f"\U0001f527 {name} — {status_label}", expanded=expanded):
                 _content_stop_session()
             return
 
         if parsed.figures_b64:
-            with st.expander(f"\U0001f527 {name} — {status_label}", expanded=True):
+            with st.expander(f"\U0001f527 {name} — {status_label}", expanded=expanded):
                 _content_figures()
             return
 
     # Generic output: formatted JSON/text + figures (e.g. execute_code matplotlib/ggplot)
-    with st.expander(f"\U0001f527 {name} — {status_label}", expanded=True):
+    with st.expander(f"\U0001f527 {name} — {status_label}", expanded=expanded):
         _content_generic()
 
 
@@ -781,10 +790,14 @@ if prompt is not None:
                             sid: s.runtime
                             for sid, s in extract_sessions_from_messages(new_messages).items()
                         }
+                        last_block_idx = next(
+                            (i for i in range(len(items) - 1, -1, -1) if items[i].get("type") == "block"),
+                            -1,
+                        )
 
                         try:
                             with assistant_placeholder.container():
-                                for item in items:
+                                for idx, item in enumerate(items):
                                     if item.get("type") == "thought":
                                         _render_thought_block(item.get("text", ""))
                                     elif item.get("type") == "block":
@@ -792,6 +805,7 @@ if prompt is not None:
                                             item["block"],
                                             sessions=sessions_map,
                                             key_suffix=f"_s{_render_iter}",
+                                            expanded=(idx == last_block_idx),
                                         )
                                 if final_content:
                                     with st.chat_message("assistant"):
