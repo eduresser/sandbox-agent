@@ -127,6 +127,35 @@ st.markdown(
         width: fit-content !important;
         max-width: fit-content !important;
     }
+    /* Trash button in sidebar: fixed size, always on the right */
+    section[data-testid="stSidebar"] [data-testid="stLayoutWrapper"] [data-testid="stHorizontalBlock"] {
+        flex-direction: row !important;
+        display: flex !important;
+    }
+    section[data-testid="stSidebar"] [data-testid="stLayoutWrapper"] [data-testid="stHorizontalBlock"] > div:first-child {
+        flex: 1 !important;
+        min-width: 0 !important;
+    }
+    section[data-testid="stSidebar"] [data-testid="stLayoutWrapper"] [data-testid="stHorizontalBlock"] > div:last-child {
+        min-width: 2.5rem !important;
+        flex: 0 0 2.5rem !important;
+        margin-left: auto !important;
+    }
+    section[data-testid="stSidebar"] [data-testid="stLayoutWrapper"] [data-testid="stHorizontalBlock"] > div:last-child [data-testid="stVerticalBlock"] {
+        width: 2.5rem !important;
+        min-width: 2.5rem !important;
+    }
+    section[data-testid="stSidebar"] [data-testid="stLayoutWrapper"] [data-testid="stHorizontalBlock"] > div:last-child button {
+        width: 2.5rem !important;
+        min-width: 2.5rem !important;
+        height: 2.5rem !important;
+        min-height: 2.5rem !important;
+        padding: 0 !important;
+        display: flex !important;
+        align-items: center !important;
+        justify-content: center !important;
+        aspect-ratio: 1 !important;
+    }
     </style>
     """,
     unsafe_allow_html=True,

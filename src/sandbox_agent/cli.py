@@ -155,7 +155,7 @@ def _run_ui(start_api_if_needed: bool = True) -> None:
             start_new_session=True,
         )
         console = __import__("rich.console", fromlist=["Console"]).Console()
-        console.print("[dim]API não detectada. Iniciando em background...[/dim]")
+        console.print("[dim]API not detected. Starting in background...[/dim]")
         for _ in range(30):
             time.sleep(1)
             if _api_is_healthy(api_url):
@@ -163,12 +163,12 @@ def _run_ui(start_api_if_needed: bool = True) -> None:
                 break
         else:
             console.print(
-                "[yellow]Timeout aguardando API. O frontend pode falhar ao conectar.[/yellow]"
+                "[yellow]Timeout waiting for API. The frontend may fail to connect.[/yellow]"
             )
     else:
         console = __import__("rich.console", fromlist=["Console"]).Console()
         console.print(
-            "[red]API não está rodando. Execute [bold]uv run sandbox-agent api[/bold] primeiro.[/red]"
+            "[red]API is not running. Execute [bold]uv run sandbox-agent api[/bold] first.[/red]"
         )
         sys.exit(1)
 
@@ -183,7 +183,7 @@ def _run_ui(start_api_if_needed: bool = True) -> None:
     except ImportError:
         console = __import__("rich.console", fromlist=["Console"]).Console()
         console.print(
-            "[red]Dependências do frontend não instaladas.[/red]\n"
+            "[red]Frontend dependencies not installed.[/red]\n"
             "Execute: [cyan]uv sync --extra frontend[/cyan]"
         )
         sys.exit(1)
@@ -199,14 +199,14 @@ def run_frontend_entry() -> None:
 def _print_help() -> None:
     console = __import__("rich.console", fromlist=["Console"]).Console()
     console.print(
-        "[bold]sandbox-agent[/bold] — LangGraph agent com execução sandboxed\n"
+        "[bold]sandbox-agent[/bold] — LangGraph agent with sandboxed execution\n"
         "\n[cyan]Uso:[/cyan]\n"
-        "  uv run sandbox-agent [comando]\n"
-        "\n[cyan]Comandos:[/cyan]\n"
-        "  cli       — CLI interativo (Rich REPL)\n"
+        "  uv run sandbox-agent [command]\n"
+        "\n[cyan]Commands:[/cyan]\n"
+        "  cli       — Interactive CLI (Rich REPL)\n"
         "  mcp       — MCP server (Cursor, Claude Desktop)\n"
         "  api       — REST API (Aegra)\n"
-        "  ui        — Streamlit UI (inicia API automaticamente se necessário)\n"
+        "  ui        — Streamlit UI (starts API automatically if needed)\n"
     )
 
 
