@@ -318,12 +318,38 @@ def format_tool_output_display(content: Any, tool_name: str = "") -> tuple[str, 
     return (formatted, is_error)
 
 
-def collect_tool_blocks(messages: list[dict]) -> tuple[list[dict], str]:
-    """Pair tool_calls with ToolMessages and extract final AI content.
+def _extract_thought_from_content(content: Any) -> str:
+    """Extract thinking/reasoning text from AIMessage content (list of blocks)."""
+    if not isinstance(content, list):
+        return ""
+    parts: list[str] = []
+    for b in content:
+        if not isinstance(b, dict):
+            continue
+        t = b.get("type", "")
+        if t in ("thinking", "reasoning"):
+            # Anthropic: thinking; OpenAI/LangChain: reasoning
+            text = b.get("thinking") or b.get("reasoning") or b.get("text", "")
+            if isinstance(text, str) and text.strip():
+                parts.append(text.strip())
+            elif isinstance(text, list):
+                # OpenAI reasoning summary can be a list of segments
+                for seg in text:
+                    if isinstance(seg, dict) and seg.get("type") == "text":
+                        parts.append(seg.get("text", ""))
+                    elif isinstance(seg, str):
+                        parts.append(seg)
+    return "\n\n".join(parts) if parts else ""
 
-    Returns (blocks, final_content) where blocks is a list of
-    {name, args, output, tool_call_id} (output may be None if still running).
+
+def collect_tool_blocks(messages: list[dict]) -> tuple[list[dict], str]:
+    """Pair tool_calls with ToolMessages, extract thoughts, and final AI content.
+
+    Returns (items, final_content) where items is a list of:
+    - {"type": "thought", "text": "..."} — reasoning/thinking before tool calls
+    - {"type": "block", "block": {...}} — tool input+output (output may be None)
     """
+    items: list[dict[str, Any]] = []
     blocks: list[dict[str, Any]] = []
     final_content = ""
 
@@ -331,26 +357,33 @@ def collect_tool_blocks(messages: list[dict]) -> tuple[list[dict], str]:
         msg_type = msg.get("type", "")
 
         if msg_type in ("ai", "AIMessage", "AIMessageChunk"):
+            content = msg.get("content", "")
             tool_calls = msg.get("tool_calls", [])
+
             if tool_calls:
+                thought = _extract_thought_from_content(content)
+                if thought:
+                    items.append({"type": "thought", "text": thought})
                 for tc in tool_calls:
-                    blocks.append({
+                    block = {
                         "name": tc.get("name", "?"),
                         "args": tc.get("args", {}),
                         "output": None,
                         "tool_call_id": tc.get("id", ""),
-                    })
-            content = msg.get("content", "")
-            if isinstance(content, str) and content:
-                final_content = content
-            elif isinstance(content, list):
-                text_parts = [
-                    b.get("text", "")
-                    for b in content
-                    if isinstance(b, dict) and b.get("type") == "text"
-                ]
-                if text_parts:
-                    final_content = "\n".join(text_parts)
+                    }
+                    blocks.append(block)
+                    items.append({"type": "block", "block": block})
+            else:
+                if isinstance(content, str) and content:
+                    final_content = content
+                elif isinstance(content, list):
+                    text_parts = [
+                        b.get("text", "")
+                        for b in content
+                        if isinstance(b, dict) and b.get("type") == "text"
+                    ]
+                    if text_parts:
+                        final_content = "\n".join(text_parts)
 
         elif msg_type in ("tool", "ToolMessage"):
             tid = msg.get("tool_call_id", "")
@@ -362,7 +395,7 @@ def collect_tool_blocks(messages: list[dict]) -> tuple[list[dict], str]:
                         b["name"] = msg["name"]
                     break
 
-    return (blocks, final_content)
+    return (items, final_content)
 
 
 # ── Session Tracking ────────────────────────────────────

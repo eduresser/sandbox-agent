@@ -6,6 +6,7 @@ import json
 from pathlib import Path
 
 import streamlit as st
+
 from api_client import AegraClient
 from utils import (
     ParsedToolResult,
@@ -91,6 +92,7 @@ st.markdown(
         padding: 0.75rem 1rem;
         margin: 0.5rem 0;
         font-family: ui-monospace, monospace;
+        font-size: 0.875rem;
     }
     .tool-block-input { margin-bottom: 0.75rem; }
     .tool-block-output { margin-top: 0.5rem; }
@@ -443,10 +445,13 @@ def _render_messages(messages: list[dict]) -> None:
         if not assistant_msgs:
             continue
 
-        blocks, final_content = collect_tool_blocks(assistant_msgs)
+        items, final_content = collect_tool_blocks(assistant_msgs)
 
-        for block in blocks:
-            _render_tool_block(block, sessions=sessions_map)
+        for item in items:
+            if item.get("type") == "thought":
+                _render_thought_block(item.get("text", ""))
+            elif item.get("type") == "block":
+                _render_tool_block(item["block"], sessions=sessions_map)
 
         if final_content or assistant_msgs:
             last_ai = None
@@ -461,6 +466,14 @@ def _render_messages(messages: list[dict]) -> None:
                         _render_ai_content(content)
 
 
+def _render_thought_block(text: str) -> None:
+    """Render agent thinking/reasoning block (expandable)."""
+    if not text or not text.strip():
+        return
+    with st.expander("\U0001f4ad Pensamento do agente", expanded=True):
+        st.markdown(text)
+
+
 def _render_b64_image(url: str) -> None:
     """Render a base64 data URL as an image."""
     if not url:
@@ -473,11 +486,12 @@ def _render_b64_image(url: str) -> None:
         st.image(url)
 
 
-def _render_tool_block(block: dict, sessions: dict[str, str] | None = None) -> None:
+def _render_tool_block(block: dict, sessions: dict[str, str] | None = None, key_suffix: str = "") -> None:
     """Render a unified tool block (input + output) with CLI-style formatting.
 
     sessions: optional dict mapping session_id -> runtime for execute_code
     syntax highlighting (python, javascript, r, julia).
+    key_suffix: optional suffix appended to widget keys to avoid duplicates during streaming.
     """
     name = block.get("name", "tool")
     args = block.get("args", {})
@@ -512,7 +526,7 @@ def _render_tool_block(block: dict, sessions: dict[str, str] | None = None) -> N
                 )
                 st.code(input_text, language=input_lang)
                 st.markdown('<div class="tool-block-output"><strong>Output</strong></div>', unsafe_allow_html=True)
-                _render_file_results(parsed)
+                _render_file_results(parsed, key_suffix=key_suffix)
             return
 
         if name == "create_session" and parsed.session_info:
@@ -587,7 +601,7 @@ def _render_tool_block(block: dict, sessions: dict[str, str] | None = None) -> N
                 st.image(decode_b64_image(fig_b64))
 
 
-def _render_file_results(parsed: ParsedToolResult) -> None:
+def _render_file_results(parsed: ParsedToolResult, key_suffix: str = "") -> None:
     """Render import/export file operation results."""
     is_export = parsed.tool_name == "export_files"
     label = "Exportacao" if is_export else "Importacao"
@@ -614,7 +628,7 @@ def _render_file_results(parsed: ParsedToolResult) -> None:
                             label=f"Baixar {filename}",
                             data=file_bytes,
                             file_name=filename,
-                            key=f"dl_{dest}",
+                            key=f"dl_{dest}{key_suffix}",
                         )
                 else:
                     st.warning(f"{icon} {filename} - Inacessivel (arquivo pode ter sido removido)")
@@ -689,6 +703,7 @@ if prompt is not None:
             assistant_placeholder = st.empty()
 
             final_messages: list[dict] = []
+            _render_iter = 0
 
             for event in client.stream_run(
                 thread_id=st.session_state.thread_id,
@@ -699,6 +714,8 @@ if prompt is not None:
                     new_messages = event.data.get("messages", [])
                     if new_messages:
                         final_messages = new_messages
+                        st.session_state.messages = final_messages
+                        _render_iter += 1
 
                         # Assistant turn: messages after last HumanMessage
                         last_human_idx = -1
@@ -708,23 +725,28 @@ if prompt is not None:
                                 break
                         assistant_msgs = new_messages[last_human_idx + 1 :] if last_human_idx >= 0 else new_messages
 
-                        blocks, final_content = collect_tool_blocks(assistant_msgs)
+                        items, final_content = collect_tool_blocks(assistant_msgs)
                         sessions_map = {
                             sid: s.runtime
                             for sid, s in extract_sessions_from_messages(new_messages).items()
                         }
 
-                        with assistant_placeholder.container():
-                            for block in blocks:
-                                _render_tool_block(block, sessions=sessions_map)
-                            if final_content:
-                                with st.chat_message("assistant"):
-                                    st.markdown(final_content)
-                            elif not blocks:
-                                with st.chat_message("assistant"):
-                                    st.markdown("\u23f3 Processando...")
+                        try:
+                            with assistant_placeholder.container():
+                                for item in items:
+                                    if item.get("type") == "thought":
+                                        _render_thought_block(item.get("text", ""))
+                                    elif item.get("type") == "block":
+                                        _render_tool_block(item["block"], sessions=sessions_map, key_suffix=f"_s{_render_iter}")
+                                if final_content:
+                                    with st.chat_message("assistant"):
+                                        st.markdown(final_content)
+                                elif not items:
+                                    with st.chat_message("assistant"):
+                                        st.markdown("\u23f3 Processando...")
+                        except Exception:
+                            pass
 
-            # Replace messages with the final server state; only then add to history
             if final_messages:
                 st.session_state.messages = final_messages
                 tid = st.session_state.thread_id
