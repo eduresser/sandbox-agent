@@ -10,9 +10,15 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
-# Same as backend: STORAGE_DIR from env, default ./storage
-_STORAGE_DIR = os.environ.get("STORAGE_DIR", "./storage")
-STORAGE_DIR = Path(_STORAGE_DIR)
+from sandbox_agent.settings import get_settings
+
+_PROJECT_ROOT = Path(__file__).resolve().parent.parent
+_settings = get_settings()
+STORAGE_DIR = (
+    Path(_settings.STORAGE_DIR)
+    if Path(_settings.STORAGE_DIR).is_absolute()
+    else _PROJECT_ROOT / _settings.STORAGE_DIR
+)
 
 FILE_ICONS: dict[str, str] = {
     ".py": "\U0001f40d",
