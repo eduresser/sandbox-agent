@@ -205,7 +205,6 @@ def _get_thread_preview(thread_id: str) -> str:
     except Exception:
         pass
 
-    previews[thread_id] = ""
     return ""
 
 
@@ -522,7 +521,7 @@ if prompt is not None:
 
     # Update thread preview cache with first line of first message
     tid = st.session_state.thread_id
-    if tid and tid not in st.session_state.thread_previews:
+    if tid and not st.session_state.thread_previews.get(tid):
         first_line = (text or full_content).strip().split("\n")[0]
         st.session_state.thread_previews[tid] = (
             first_line[:40] + ("..." if len(first_line) > 40 else "")
