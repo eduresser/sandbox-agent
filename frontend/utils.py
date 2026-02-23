@@ -77,7 +77,7 @@ def time_ago(iso_str: str) -> str:
         return ""
 
     if seconds < 60:
-        return "agora"
+        return "now"
     minutes = seconds // 60
     if minutes < 60:
         return f"{minutes} min"
@@ -88,7 +88,7 @@ def time_ago(iso_str: str) -> str:
     if days < 30:
         return f"{days}d"
     months = days // 30
-    return f"{months} mes{'es' if months > 1 else ''}"
+    return f"{months} month{'s' if months > 1 else ''}"
 
 
 # ── File Upload ─────────────────────────────────────────
@@ -298,7 +298,7 @@ def format_tool_output_display(content: Any, tool_name: str = "") -> tuple[str, 
     if len(lines) > _MAX_TOOL_OUTPUT_LINES:
         visible = lines[:_MAX_TOOL_OUTPUT_LINES]
         omitted = len(lines) - _MAX_TOOL_OUTPUT_LINES
-        visible.append(f"\n... +{omitted} linhas omitidas ...")
+        visible.append(f"\n... +{omitted} lines omitted ...")
         formatted = "\n".join(visible)
 
     is_error = False

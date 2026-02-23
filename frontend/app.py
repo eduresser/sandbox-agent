@@ -95,7 +95,7 @@ st.markdown(
     .tool-block-input { margin-bottom: 0.75rem; }
     .tool-block-output { margin-top: 0.5rem; }
     .tool-block-title { font-weight: 600; margin-bottom: 0.5rem; }
-    /* Download button: verde quando disponível (não desabilitado) */
+    /* Download button: green when available (not disabled) */
     div[data-testid="stDownloadButton"] button:not(:disabled) {
         background-color: #28a745 !important;
         border-color: #28a745 !important;
@@ -106,7 +106,7 @@ st.markdown(
         border-color: #1e7e34 !important;
         color: white !important;
     }
-    /* Botão desabilitado: cinza */
+    /* Disabled button: gray */
     div[data-testid="stDownloadButton"] button:disabled,
     div[data-testid="stButton"] button:disabled {
         background-color: #6c757d !important;
@@ -115,7 +115,7 @@ st.markdown(
         opacity: 0.65;
         cursor: not-allowed !important;
     }
-    /* Linha botão + caption: flex, cada item com seu tamanho natural */
+    /* Button row + caption: flex, each item with its natural size */
     div[data-testid="stHorizontalBlock"]:has([data-testid="stDownloadButton"]) {
         display: flex !important;
         flex-wrap: wrap !important;
@@ -212,7 +212,7 @@ def _create_new_thread() -> str | None:
         _refresh_threads()
         return tid
     except Exception as e:
-        st.error(f"Erro ao criar thread: {e}")
+        st.error(f"Error creating thread: {e}")
         return None
 
 
@@ -267,7 +267,7 @@ def _get_thread_preview(thread_id: str) -> str:
 _PROVIDERS = ["openai", "anthropic", "google_genai", "azure_openai", "ollama", "fireworks"]
 
 
-@st.dialog("Configuracoes")
+@st.dialog("Settings")
 def _settings_dialog() -> None:
     # Health check
     try:
@@ -276,21 +276,21 @@ def _settings_dialog() -> None:
         healthy = False
 
     if healthy:
-        st.success("API Conectada", icon="\u2705")
+        st.success("API Connected", icon="\u2705")
     else:
-        st.error("API Indisponivel", icon="\u274c")
+        st.error("API Unavailable", icon="\u274c")
     st.session_state.api_healthy = healthy
 
-    st.subheader("Modelo LLM")
+    st.subheader("LLM Model")
     new_model = st.text_input(
-        "Modelo",
+        "Model",
         value=st.session_state.chat_model,
         key="dlg_chat_model",
         placeholder="gpt-4o, claude-sonnet-4-20250514, gemini-2.0-flash...",
     )
     cur_provider = st.session_state.chat_model_provider
     new_provider = st.selectbox(
-        "Provedor",
+        "Provider",
         options=_PROVIDERS,
         index=_PROVIDERS.index(cur_provider) if cur_provider in _PROVIDERS else 0,
         key="dlg_chat_model_provider",
@@ -303,13 +303,13 @@ def _settings_dialog() -> None:
         placeholder="sk-...",
     )
     new_base_url = st.text_input(
-        "Base URL (opcional)",
+        "Base URL (optional)",
         value=st.session_state.chat_model_base_url,
         key="dlg_chat_model_base_url",
         placeholder="https://api.openai.com/v1",
     )
     new_vision = st.checkbox(
-        "Suporta Vision",
+        "Supports Vision",
         value=st.session_state.chat_model_supports_vision,
         key="dlg_vision",
     )
@@ -319,20 +319,20 @@ def _settings_dialog() -> None:
         sessions = extract_sessions_from_messages(st.session_state.messages)
         if sessions:
             st.divider()
-            st.subheader("Sessoes Sandbox")
+            st.subheader("Sandbox Sessions")
             for sid, info in sessions.items():
                 status_map = {
-                    "running": ("\U0001f7e2", "Ativa"),
-                    "starting": ("\U0001f7e1", "Iniciando"),
-                    "stopped": ("\U0001f534", "Encerrada"),
-                    "dead": ("\u26ab", "Morta"),
+                    "running": ("\U0001f7e2", "Active"),
+                    "starting": ("\U0001f7e1", "Starting"),
+                    "stopped": ("\U0001f534", "Stopped"),
+                    "dead": ("\u26ab", "Dead"),
                 }
                 icon, label = status_map.get(info.status, ("\u26aa", info.status))
                 runtime = f" ({info.runtime})" if info.runtime else ""
                 st.markdown(f"{icon} `{sid}`{runtime} - {label}")
 
     st.divider()
-    if st.button("Salvar", use_container_width=True, type="primary"):
+    if st.button("Save", use_container_width=True, type="primary"):
         st.session_state.chat_model = new_model
         st.session_state.chat_model_provider = new_provider
         st.session_state.chat_model_api_key = new_api_key
@@ -346,7 +346,7 @@ def _settings_dialog() -> None:
 with st.sidebar:
     # Top: always visible
     if st.button(
-        "\u2795  Nova Conversa",
+        "\u2795  New conversation",
         use_container_width=True,
         type="primary",
     ):
@@ -372,7 +372,7 @@ with st.sidebar:
 
                 col_main, col_del = st.columns([6, 1])
                 with col_main:
-                    display_text = preview or "Nova conversa"
+                    display_text = preview or "New conversation"
                     if elapsed:
                         display_text += f"  \u00b7  {elapsed}"
 
@@ -389,7 +389,7 @@ with st.sidebar:
                     if st.button(
                         "\U0001f5d1\ufe0f",
                         key=f"del_{tid}",
-                        help="Deletar conversa",
+                        help="Delete conversation",
                     ):
                         try:
                             client.delete_thread(tid)
@@ -400,12 +400,12 @@ with st.sidebar:
                             _refresh_threads()
                             st.rerun()
                         except Exception as e:
-                            st.error(f"Erro: {e}")
+                            st.error(f"Error: {e}")
         else:
-            st.caption("Nenhuma conversa ainda.")
+            st.caption("No conversations yet.")
 
     # Bottom: always visible
-    if st.button("\u2699\ufe0f  Configuracoes", use_container_width=True):
+    if st.button("\u2699\ufe0f  Settings", use_container_width=True):
         _settings_dialog()
 
 
@@ -415,8 +415,8 @@ st.title("\U0001f4bb Sandbox Agent")
 
 if not st.session_state.api_healthy:
     st.warning(
-        "A API Aegra nao esta acessivel em `http://127.0.0.1:8000`. "
-        "Inicie a API com `uv run sandbox-agent api` ou use `uv run sandbox-agent ui` (inicia a API automaticamente)."
+        "The Aegra API is not accessible at `http://127.0.0.1:8000`. "
+        "Start the API with `uv run sandbox-agent api` or use `uv run sandbox-agent ui` (starts the API automatically)."
     )
 
 # No auto-create: thread is created only when user sends first message and gets a response
@@ -500,7 +500,7 @@ def _render_thought_block(text: str) -> None:
     """Render agent thinking/reasoning block (expandable)."""
     if not text or not text.strip():
         return
-    with st.expander("\U0001f4ad Pensamento do agente", expanded=True):
+    with st.expander("\U0001f4ad Agent thinking", expanded=True):
         st.markdown(text)
 
 
@@ -534,11 +534,11 @@ def _render_tool_block(block: dict, sessions: dict[str, str] | None = None, key_
     # Determine border color: yellow (pending), green (ok), red (error)
     if output is None:
         border_color = "#b8860b"  # yellow/darkgoldenrod
-        status_label = "Executando..."
+        status_label = "Running..."
     else:
         _, is_error = format_tool_output_display(output, name)
         border_color = "#dc3545" if is_error else "#28a745"  # red / green
-        status_label = "ERRO" if is_error else "OK"
+        status_label = "ERROR" if is_error else "OK"
 
     # Build a fake message dict for parse_tool_message when we have output
     if output is not None and name in ("import_files", "export_files", "create_session", "stop_session"):
@@ -580,7 +580,7 @@ def _render_tool_block(block: dict, sessions: dict[str, str] | None = None, key_
                 )
                 st.code(input_text, language=input_lang)
                 st.markdown('<div class="tool-block-output"><strong>Output</strong></div>', unsafe_allow_html=True)
-                st.info(f"{icon} Sessao `{sid}` ({runtime}) - {status}")
+                st.info(f"{icon} Session `{sid}` ({runtime}) - {status}")
             return
 
         if name == "stop_session" and parsed.session_info:
@@ -595,7 +595,7 @@ def _render_tool_block(block: dict, sessions: dict[str, str] | None = None, key_
                 )
                 st.code(input_text, language=input_lang)
                 st.markdown('<div class="tool-block-output"><strong>Output</strong></div>', unsafe_allow_html=True)
-                st.warning(f"\U0001f534 Sessao `{sid}` encerrada")
+                st.warning(f"\U0001f534 Session `{sid}` stopped")
             return
 
         if parsed.figures_b64:
@@ -627,7 +627,7 @@ def _render_tool_block(block: dict, sessions: dict[str, str] | None = None, key_
         st.code(input_text, language=input_lang)
         st.markdown('<div class="tool-block-output"><strong>Output</strong></div>', unsafe_allow_html=True)
         if output is None:
-            st.caption("\u23f3 Executando...")
+            st.caption("\u23f3 Running...")
         else:
             formatted, _ = format_tool_output_display(output, name)
             st.code(formatted, language="json")
@@ -644,7 +644,7 @@ def _render_file_results(
 ) -> None:
     """Render import/export file operation results."""
     is_export = parsed.tool_name == "export_files"
-    label = "Exportacao" if is_export else "Importacao"
+    label = "Export" if is_export else "Import"
 
     for fr in parsed.file_results:
         success = fr.get("success", False)
@@ -674,7 +674,7 @@ def _render_file_results(
                 btn_col, status_col = st.columns([1, 1])
                 with btn_col:
                     st.download_button(
-                        label="Baixar",
+                        label="Download",
                         data=file_bytes or b"",
                         file_name=filename,
                         key=f"dl_{session_id}_{path}{key_suffix}",
@@ -682,23 +682,23 @@ def _render_file_results(
                         disabled=not available,
                     )
                 with status_col:
-                    st.caption(f"{icon} {filename} ({size_str}) — {'Disponível' if available else 'Indisponível'}")
+                    st.caption(f"{icon} {filename} ({size_str}) — {'Available' if available else 'Unavailable'}")
             elif is_export and session_id and path:
                 btn_col, status_col = st.columns([1, 1])
                 with btn_col:
                     st.download_button(
-                        label="Baixar",
+                        label="Download",
                         data=b"",
                         file_name=filename,
                         key=f"dl_{session_id}_{path}{key_suffix}",
                         disabled=True,
                     )
                 with status_col:
-                    st.caption(f"{icon} {filename} ({size_str}) — Indisponível")
+                    st.caption(f"{icon} {filename} ({size_str}) — Unavailable")
             else:
                 st.caption(f"{icon} {filename} ({size_str}) — {label} OK")
         else:
-            st.error(f"{icon} {filename} - Falha: {error}")
+            st.error(f"{icon} {filename} - Failed: {error}")
 
 
 # Render existing messages
@@ -708,7 +708,7 @@ _render_messages(st.session_state.messages)
 # ── Chat Input ──────────────────────────────────────────
 
 prompt = st.chat_input(
-    "Envie uma mensagem...",
+    "Send a message...",
     accept_file="multiple",
     file_type=None,
     disabled=st.session_state.running or not st.session_state.api_healthy,
@@ -806,7 +806,7 @@ if prompt is not None:
                                         st.markdown(final_content)
                                 elif not items:
                                     with st.chat_message("assistant"):
-                                        st.markdown("\u23f3 Processando...")
+                                        st.markdown("\u23f3 Processing...")
                         except Exception:
                             pass
 
@@ -820,7 +820,7 @@ if prompt is not None:
                     )
 
         except Exception as e:
-            st.error(f"Erro durante execucao: {e}")
+            st.error(f"Error during execution: {e}")
 
         finally:
             st.session_state.running = False
