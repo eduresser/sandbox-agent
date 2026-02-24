@@ -299,7 +299,7 @@ def _get_thread_preview(thread_id: str) -> str:
     return ""
 
 
-_PROVIDERS = ["openai", "anthropic", "google_genai", "azure_openai", "ollama", "fireworks"]
+_PROVIDERS = ["openai", "anthropic", "google_genai", "ollama"]
 
 
 @st.dialog("Settings")
