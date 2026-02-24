@@ -8,7 +8,7 @@ ENV JULIA_NUM_PRECOMPILE_PARALLEL=4
 COPY client/client_c.c /tmp/client_c.c
 
 RUN apt-get update \
-    && apt-get install -y --no-install-recommends gcc libc6-dev \
+    && apt-get install -y --no-install-recommends zip unzip gcc libc6-dev \
     && mkdir -p /kernel /client \
     && gcc -O2 -static -o /client/client_c /tmp/client_c.c \
     && rm /tmp/client_c.c \
