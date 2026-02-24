@@ -3,15 +3,14 @@
 from __future__ import annotations
 
 import json
-from dataclasses import asdict
 
-from langchain_core.tools import tool
+from langchain_core.tools import BaseTool, tool
 
 from sandbox_agent.sandbox.manager import SandboxManager
-from sandbox_agent.tools._helpers import error_response
+from sandbox_agent.tools._core import export_files as core_export_files
 
 
-def create_export_files_tool(manager: SandboxManager):
+def create_export_files_tool(manager: SandboxManager) -> BaseTool:
     @tool
     def export_files(
         session_id: str,
@@ -22,6 +21,7 @@ def create_export_files_tool(manager: SandboxManager):
         Files become available via the API download endpoint and for import_files
         in other sessions of the same conversation. The user can download via
         GET /threads/{thread_id}/files/download?session_id=...&path=...
+        (API must be running). Result includes download_url for each file.
 
         Args:
             session_id: ID returned by create_session.
@@ -30,14 +30,12 @@ def create_export_files_tool(manager: SandboxManager):
                 Example: [{"source": "report.pdf"}, {"source": "/workspace/data.csv"}]
 
         Returns:
-            JSON with per-file results (session_id, path, success, size, error).
-            path is always absolute inside the container (e.g. /workspace/report.pdf).
+            JSON with per-file results (session_id, path, success, size, error,
+            download_url). path is always absolute (e.g. /workspace/report.pdf).
         """
-        try:
-            result = manager.export_files(session_id, list(files))
-        except Exception as exc:
-            return error_response(manager, exc)
-
-        return json.dumps(asdict(result), ensure_ascii=False)
+        return json.dumps(
+            core_export_files(manager, session_id, files),
+            ensure_ascii=False,
+        )
 
     return export_files

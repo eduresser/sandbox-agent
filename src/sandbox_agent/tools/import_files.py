@@ -3,15 +3,14 @@
 from __future__ import annotations
 
 import json
-from dataclasses import asdict
 
-from langchain_core.tools import tool
+from langchain_core.tools import BaseTool, tool
 
 from sandbox_agent.sandbox.manager import SandboxManager
-from sandbox_agent.tools._helpers import error_response
+from sandbox_agent.tools._core import import_files as core_import_files
 
 
-def create_import_files_tool(manager: SandboxManager):
+def create_import_files_tool(manager: SandboxManager) -> BaseTool:
     @tool
     def import_files(
         session_id: str,
@@ -36,11 +35,9 @@ def create_import_files_tool(manager: SandboxManager):
         Returns:
             JSON with per-file results (source, destination, success, size, error).
         """
-        try:
-            result = manager.import_files(session_id, list(files))
-        except Exception as exc:
-            return error_response(manager, exc)
-
-        return json.dumps(asdict(result), ensure_ascii=False)
+        return json.dumps(
+            core_import_files(manager, session_id, files),
+            ensure_ascii=False,
+        )
 
     return import_files
