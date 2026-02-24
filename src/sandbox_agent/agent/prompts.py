@@ -743,18 +743,17 @@ PHASE 5 — LAST RESORT ONLY:
   5. NEXT STEPS (if applicable):
      Suggest improvements, optimizations, or extensions the user might want.
 
-  Format example:
-  ───────────────────────────────
-  ✅ **Recommended solution**: [description]
-  **Why**: [justification based on user's needs]
+  <format_example>
+    ✅ **Recommended solution**: [description]
+    **Why**: [justification based on user's needs]
 
-  🔄 **Alternatives considered**:
-  1. [Alternative A] — discarded because [reason]
-  2. [Alternative B] — viable, but [trade-off]
+    🔄 **Alternatives considered**:
+    1. [Alternative A] — discarded because [reason]
+    2. [Alternative B] — viable, but [trade-off]
 
-  ⚠️ **Limitations**: [any caveats]
-  💡 **Next steps**: [suggestions]
-  ───────────────────────────────
+    ⚠️ **Limitations**: [any caveats]
+    💡 **Next steps**: [suggestions]
+  </format_example>
 </solution_presentation>
 
 <rules>

@@ -15,7 +15,7 @@ from langgraph.graph import END, StateGraph
 from sandbox_agent.agent.prompts import SYSTEM_PROMPT
 from sandbox_agent.agent.state import AgentState
 from sandbox_agent.clients import get_chat_model
-from sandbox_agent.sandbox.manager import SandboxManager, current_thread_id
+from sandbox_agent.sandbox import SandboxManager, current_thread_id, get_manager
 from sandbox_agent.settings import get_settings
 from sandbox_agent.tools import create_tools
 
@@ -95,7 +95,7 @@ def build_agent(
         Compiled LangGraph ``CompiledGraph`` ready to ``.invoke()`` or ``.stream()``.
     """
     if manager is None:
-        manager = SandboxManager()
+        manager = get_manager()
 
     if llm is None:
         llm = get_chat_model()
@@ -250,14 +250,5 @@ def build_agent(
 
 
 # ── Aegra / LangGraph Platform ─────────────────────────────────────────────
-_manager: SandboxManager | None = None
 
-
-def _get_manager() -> SandboxManager:
-    global _manager
-    if _manager is None:
-        _manager = SandboxManager()
-    return _manager
-
-
-graph = build_agent(manager=_get_manager(), checkpointer=None)
+graph = build_agent(manager=get_manager(), checkpointer=None)
