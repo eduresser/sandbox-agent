@@ -71,6 +71,9 @@ def _process_execute_code_content(raw: str, vision: bool) -> str | list[dict]:
             })
         return content
 
+    # Include figures in JSON so frontend can display them when vision=False
+    if figures:
+        parsed["figures"] = figures
     return json.dumps(parsed, ensure_ascii=False)
 
 

@@ -514,10 +514,13 @@ def _render_messages(messages: list[dict]) -> None:
             if item.get("type") == "thought":
                 _render_thought_block(item.get("text", ""))
             elif item.get("type") == "block":
+                blk = item["block"]
+                bid = blk.get("tool_call_id", str(idx))
                 _render_tool_block(
-                    item["block"],
+                    blk,
                     sessions=sessions_map,
                     expanded=(idx == last_block_idx),
+                    block_id=bid,
                 )
 
         if final_content or assistant_msgs:
@@ -558,12 +561,14 @@ def _render_tool_block(
     sessions: dict[str, str] | None = None,
     key_suffix: str = "",
     expanded: bool = False,
+    block_id: str = "",
 ) -> None:
     """Render a unified tool block (input + output) with CLI-style formatting.
 
     sessions: optional dict mapping session_id -> runtime for execute_code
     syntax highlighting (python, javascript, r, julia).
     key_suffix: optional suffix appended to widget keys to avoid duplicates during streaming.
+    block_id: unique id for widget keys (e.g. tool_call_id or index).
     """
     name = block.get("name", "tool")
     args = block.get("args", {})
@@ -830,11 +835,14 @@ if prompt is not None:
                                     if item.get("type") == "thought":
                                         _render_thought_block(item.get("text", ""))
                                     elif item.get("type") == "block":
+                                        blk = item["block"]
+                                        bid = blk.get("tool_call_id", str(idx))
                                         _render_tool_block(
-                                            item["block"],
+                                            blk,
                                             sessions=sessions_map,
                                             key_suffix=f"_s{_render_iter}",
                                             expanded=(idx == last_block_idx),
+                                            block_id=bid,
                                         )
                                 if final_content:
                                     with st.chat_message("assistant"):
