@@ -3294,6 +3294,7 @@ dependencies = [
     { name = "aegra-cli", version = "0.6.0", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version < '3.12'" },
     { name = "aegra-cli", version = "0.7.2", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version >= '3.12'" },
     { name = "docker" },
+    { name = "httpx" },
     { name = "langchain" },
     { name = "langchain-anthropic" },
     { name = "langchain-google-genai" },
@@ -3308,7 +3309,6 @@ dependencies = [
 
 [package.optional-dependencies]
 frontend = [
-    { name = "httpx" },
     { name = "keyring" },
     { name = "streamlit" },
 ]
@@ -3324,7 +3324,7 @@ dev = [
 requires-dist = [
     { name = "aegra-cli", specifier = ">=0.6.0" },
     { name = "docker", specifier = ">=7.0.0" },
-    { name = "httpx", marker = "extra == 'frontend'", specifier = ">=0.27.0" },
+    { name = "httpx", specifier = ">=0.27.0" },
     { name = "keyring", marker = "extra == 'frontend'", specifier = ">=25.0.0" },
     { name = "langchain", specifier = ">=0.3.14" },
     { name = "langchain-anthropic", specifier = ">=0.3.0" },
