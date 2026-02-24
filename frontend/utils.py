@@ -4,13 +4,12 @@ from __future__ import annotations
 
 import base64
 import json
-from pathlib import Path
-
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
+from sandbox_agent.sandbox.models import MAX_TOOL_OUTPUT_LINES, RUNTIME_LANGUAGE
 from sandbox_agent.settings import get_settings
 
 _PROJECT_ROOT = Path(__file__).resolve().parent.parent
@@ -162,15 +161,24 @@ def parse_tool_message(message: dict) -> ParsedToolResult:
     content = message.get("content", "")
 
     if isinstance(content, list):
+        seen_b64: set[str] = set()
         for block in content:
             if isinstance(block, dict):
                 if block.get("type") == "image_url":
                     url = block.get("image_url", {}).get("url", "")
                     if url.startswith("data:image"):
                         b64 = url.split(",", 1)[-1] if "," in url else url
-                        result.figures_b64.append(b64)
+                        if b64 not in seen_b64:
+                            seen_b64.add(b64)
+                            result.figures_b64.append(b64)
                 elif block.get("type") == "text":
+                    before = len(result.figures_b64)
                     _parse_tool_json(block.get("text", ""), result)
+                    for fig in result.figures_b64[before:]:
+                        if fig in seen_b64:
+                            result.figures_b64.remove(fig)
+                        else:
+                            seen_b64.add(fig)
         return result
 
     if isinstance(content, str):
@@ -238,16 +246,6 @@ def _parse_tool_json(raw: str, result: ParsedToolResult) -> None:
 
 # ── Tool Block Formatting (CLI-style) ─────────────────────
 
-_MAX_TOOL_OUTPUT_LINES = 60
-
-# Map runtime to st.code language (same as CLI _RUNTIME_LEXER)
-_RUNTIME_LANGUAGE: dict[str, str] = {
-    "python": "python",
-    "node": "javascript",
-    "r": "r",
-    "julia": "julia",
-}
-
 
 def format_tool_input_display(
     tool_call: dict[str, Any],
@@ -265,7 +263,7 @@ def format_tool_input_display(
         lang = "python"
         session_id = args.get("session_id", "")
         if sessions and session_id and session_id in sessions:
-            lang = _RUNTIME_LANGUAGE.get(sessions[session_id], "python")
+            lang = RUNTIME_LANGUAGE.get(sessions[session_id], "python")
         return (args["code"], lang)
     if name == "execute_terminal" and "command" in args:
         return (args["command"], "bash")
@@ -297,9 +295,9 @@ def format_tool_output_display(content: Any, tool_name: str = "") -> tuple[str, 
         formatted = str(text_content)
 
     lines = formatted.splitlines()
-    if len(lines) > _MAX_TOOL_OUTPUT_LINES:
-        visible = lines[:_MAX_TOOL_OUTPUT_LINES]
-        omitted = len(lines) - _MAX_TOOL_OUTPUT_LINES
+    if len(lines) > MAX_TOOL_OUTPUT_LINES:
+        visible = lines[:MAX_TOOL_OUTPUT_LINES]
+        omitted = len(lines) - MAX_TOOL_OUTPUT_LINES
         visible.append(f"\n... +{omitted} lines omitted ...")
         formatted = "\n".join(visible)
 

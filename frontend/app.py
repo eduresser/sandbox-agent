@@ -2,11 +2,9 @@
 
 from __future__ import annotations
 
-import json
 from pathlib import Path
 
 import streamlit as st
-
 from api_client import AegraClient
 from config import load_config, save_config
 from utils import (
@@ -196,10 +194,16 @@ def get_client() -> AegraClient:
 
 client = get_client()
 
-try:
-    st.session_state.api_healthy = client.is_healthy()
-except Exception:
-    st.session_state.api_healthy = False
+
+@st.cache_data(ttl=10, show_spinner=False)
+def _cached_health_check() -> bool:
+    try:
+        return client.is_healthy()
+    except Exception:
+        return False
+
+
+st.session_state.api_healthy = _cached_health_check()
 
 # ── Helpers ─────────────────────────────────────────────
 
@@ -220,11 +224,17 @@ def _get_configurable() -> dict[str, str]:
     return cfg
 
 
-def _refresh_threads() -> None:
+@st.cache_data(ttl=5, show_spinner=False)
+def _cached_list_threads(limit: int = 50) -> list[dict]:
     try:
-        st.session_state.threads_list = client.list_threads(limit=50)
+        return client.list_threads(limit=limit)
     except Exception:
-        st.session_state.threads_list = []
+        return []
+
+
+def _refresh_threads() -> None:
+    _cached_list_threads.clear()
+    st.session_state.threads_list = _cached_list_threads()
 
 
 def _load_thread_messages(thread_id: str) -> list[dict]:
@@ -401,7 +411,7 @@ with st.sidebar:
         st.rerun()
 
     # Middle: scrollable thread list (only threads with at least one message + response)
-    _refresh_threads()
+    st.session_state.threads_list = _cached_list_threads()
     threads = st.session_state.threads_list
     threads_with_content = [t for t in threads if _get_thread_preview(t.get("thread_id", ""))]
 
@@ -482,19 +492,6 @@ def _render_human_message(msg: dict) -> None:
                     st.markdown(block["text"])
 
 
-def _render_ai_content(content: str | list) -> None:
-    """Render AIMessage content (text + images)."""
-    if isinstance(content, str) and content:
-        st.markdown(content)
-    elif isinstance(content, list):
-        for block in content:
-            if isinstance(block, dict):
-                if block.get("type") == "text":
-                    st.markdown(block["text"])
-                elif block.get("type") == "image_url":
-                    _render_b64_image(block.get("image_url", {}).get("url", ""))
-
-
 def _render_messages(messages: list[dict]) -> None:
     """Render message history with unified tool blocks (input+output together)."""
     sessions_map = {
@@ -539,17 +536,9 @@ def _render_messages(messages: list[dict]) -> None:
                     block_id=bid,
                 )
 
-        if final_content or assistant_msgs:
-            last_ai = None
-            for m in reversed(assistant_msgs):
-                if m.get("type") in ("ai", "AIMessage", "AIMessageChunk"):
-                    last_ai = m
-                    break
-            if last_ai:
-                content = last_ai.get("content", "")
-                if content:
-                    with st.chat_message("assistant"):
-                        _render_ai_content(content)
+        if final_content:
+            with st.chat_message("assistant"):
+                st.markdown(final_content)
 
 
 def _render_thought_block(text: str) -> None:
@@ -558,18 +547,6 @@ def _render_thought_block(text: str) -> None:
         return
     with st.expander("\U0001f4ad Agent thinking", expanded=True):
         st.markdown(text)
-
-
-def _render_b64_image(url: str) -> None:
-    """Render a base64 data URL as an image."""
-    if not url:
-        return
-    if url.startswith("data:image"):
-        b64_part = url.split(",", 1)[-1] if "," in url else ""
-        if b64_part:
-            st.image(decode_b64_image(b64_part))
-    else:
-        st.image(url)
 
 
 def _render_tool_block(
@@ -607,10 +584,9 @@ def _render_tool_block(
         st.code(input_text, language=input_lang)
         st.markdown('<div class="tool-block-output"><strong>Output</strong></div>', unsafe_allow_html=True)
 
-    # Build a fake message dict for parse_tool_message when we have output
-    if output is not None and name in ("import_files", "export_files", "create_session", "stop_session"):
-        fake_msg = {"name": name, "content": output}
-        parsed = parse_tool_message(fake_msg)
+    parsed = None
+    if output is not None:
+        parsed = parse_tool_message({"name": name, "content": output})
 
     def _content_import_export() -> None:
         _render_content()
@@ -649,15 +625,12 @@ def _render_tool_block(
         else:
             formatted, _ = format_tool_output_display(output, name)
             st.code(formatted, language="json")
-            parsed_out = parse_tool_message({"name": name, "content": output})
-            for fig_b64 in parsed_out.figures_b64:
-                st.image(decode_b64_image(fig_b64))
+            if parsed:
+                for fig_b64 in parsed.figures_b64:
+                    st.image(decode_b64_image(fig_b64))
 
-    # Build a fake message dict for parse_tool_message when we have output
-    if output is not None and name in ("import_files", "export_files", "create_session", "stop_session"):
-        fake_msg = {"name": name, "content": output}
-        parsed = parse_tool_message(fake_msg)
-
+    _special_tools = ("import_files", "export_files", "create_session", "stop_session")
+    if parsed is not None and name in _special_tools:
         if name in ("import_files", "export_files") and parsed.file_results:
             with st.expander(f"\U0001f527 {name} — {status_label}", expanded=expanded):
                 _content_import_export()
