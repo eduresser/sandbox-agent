@@ -400,7 +400,8 @@ flowchart TB
     end
 
     subgraph Storage ["Persistence"]
-        PG["PostgreSQL\ncheckpoints, exports"]
+        PG["PostgreSQL
+        checkpoints, exports"]
     end
 
     API --> PG
