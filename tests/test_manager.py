@@ -11,7 +11,7 @@ from pathlib import Path
 
 import pytest
 
-from sandbox_agent.sandbox.manager import SandboxManager
+from sandbox_agent.sandbox.manager import SandboxManager, current_thread_id
 from sandbox_agent.sandbox.models import ExecutionResult, TerminalResult
 
 
@@ -201,6 +201,35 @@ class TestImportFiles:
         assert result.success is False
         assert result.files[0].success is False
         assert "not found" in result.files[0].error.lower()
+
+    def test_import_from_exported_session(self, manager: SandboxManager):
+        """Cross-session: export in session A, import into session B."""
+        token = current_thread_id.set("test_cross_session")
+        sid_a, sid_b = None, None
+        try:
+            info_a = manager.create_session(runtime="python")
+            info_b = manager.create_session(runtime="python")
+            sid_a, sid_b = info_a.session_id, info_b.session_id
+
+            manager.execute_terminal(sid_a, "echo 'cross,session' > /workspace/data.csv")
+            export_result = manager.export_files(sid_a, [{"source": "data.csv"}])
+            assert export_result.success
+            path = export_result.files[0].path
+
+            import_result = manager.import_files(sid_b, [
+                {"session_id": sid_a, "path": path, "destination": "data.csv"},
+            ])
+            assert import_result.success
+            assert import_result.files[0].success
+
+            ls_result = manager.execute_terminal(sid_b, "cat /workspace/data.csv")
+            assert "cross,session" in ls_result.stdout
+        finally:
+            current_thread_id.reset(token)
+            if sid_a:
+                manager.stop_session(sid_a)
+            if sid_b:
+                manager.stop_session(sid_b)
 
 
 class TestRRuntime:

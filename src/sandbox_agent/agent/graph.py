@@ -6,14 +6,16 @@ import json
 import logging
 from typing import Any
 
+from langchain.chat_models import init_chat_model
 from langchain_core.language_models import BaseChatModel
 from langchain_core.messages import AIMessage, SystemMessage, ToolMessage
+from langchain_core.runnables import RunnableConfig
 from langgraph.graph import END, StateGraph
 
 from sandbox_agent.agent.prompts import SYSTEM_PROMPT
 from sandbox_agent.agent.state import AgentState
 from sandbox_agent.clients import get_chat_model
-from sandbox_agent.sandbox.manager import SandboxManager
+from sandbox_agent.sandbox import SandboxManager, current_thread_id, get_manager
 from sandbox_agent.settings import get_settings
 from sandbox_agent.tools import create_tools
 
@@ -69,6 +71,9 @@ def _process_execute_code_content(raw: str, vision: bool) -> str | list[dict]:
             })
         return content
 
+    # Include figures in JSON so frontend can display them when vision=False
+    if figures:
+        parsed["figures"] = figures
     return json.dumps(parsed, ensure_ascii=False)
 
 
@@ -90,7 +95,7 @@ def build_agent(
         Compiled LangGraph ``CompiledGraph`` ready to ``.invoke()`` or ``.stream()``.
     """
     if manager is None:
-        manager = SandboxManager()
+        manager = get_manager()
 
     if llm is None:
         llm = get_chat_model()
@@ -106,34 +111,93 @@ def build_agent(
         "supported": vision_override,
     }
 
-    def _vision_enabled() -> bool:
+    def _vision_enabled(config: RunnableConfig) -> bool:
+        cfg = config.get("configurable") or {}
+        vision_from_cfg = cfg.get("chat_model_supports_vision")
+        if vision_from_cfg is not None:
+            return str(vision_from_cfg).lower() in ("true", "1", "yes")
         v = vision_state["supported"]
         return v is True or v is None  # None means "try it"
 
-    def tool_node(state: AgentState) -> dict[str, Any]:
-        last_msg = state["messages"][-1]
-        assert isinstance(last_msg, AIMessage) and last_msg.tool_calls
+    def tool_node(state: AgentState, config: RunnableConfig) -> dict[str, Any]:
+        thread_id = (config.get("configurable") or {}).get("thread_id")
+        token = current_thread_id.set(thread_id)
+        try:
+            last_msg = state["messages"][-1]
+            assert isinstance(last_msg, AIMessage) and last_msg.tool_calls
 
-        result_messages: list[ToolMessage] = []
-        for tc in last_msg.tool_calls:
-            tool_fn = tools_by_name[tc["name"]]
-            raw_result = tool_fn.invoke(tc["args"])
+            result_messages: list[ToolMessage] = []
+            for tc in last_msg.tool_calls:
+                tool_fn = tools_by_name[tc["name"]]
+                raw_result = tool_fn.invoke(tc["args"])
 
-            if tc["name"] == "execute_code":
-                content = _process_execute_code_content(raw_result, _vision_enabled())
-            else:
-                content = raw_result
+                if tc["name"] == "execute_code":
+                    content = _process_execute_code_content(
+                        raw_result, _vision_enabled(config)
+                    )
+                else:
+                    content = raw_result
 
-            result_messages.append(
-                ToolMessage(content=content, tool_call_id=tc["id"], name=tc["name"])
-            )
+                result_messages.append(
+                    ToolMessage(content=content, tool_call_id=tc["id"], name=tc["name"])
+                )
 
-        return {"messages": result_messages}
+            return {"messages": result_messages}
+        finally:
+            current_thread_id.reset(token)
 
-    def call_model(state: AgentState) -> dict[str, Any]:
+    _override_cache: dict[str, BaseChatModel] = {}
+
+    def _get_llm_for_config(config: RunnableConfig) -> BaseChatModel:
+        """Return an LLM bound with tools, using overrides from configurable if present."""
+        configurable = (config.get("configurable") or {})
+        model = configurable.get("chat_model")
+        provider = configurable.get("chat_model_provider")
+        api_key = configurable.get("chat_model_api_key")
+
+        if not model and not provider and not api_key:
+            return llm_with_tools
+
+        base_url = configurable.get("chat_model_base_url") or settings.CHAT_MODEL_BASE_URL
+        effective_key = api_key or settings.CHAT_MODEL_API_KEY
+        cache_key = (
+            f"{model or settings.CHAT_MODEL}"
+            f"|{provider or settings.CHAT_MODEL_PROVIDER}"
+            f"|{hash(effective_key)}"
+            f"|{base_url or ''}"
+        )
+        if cache_key in _override_cache:
+            return _override_cache[cache_key]
+
+        kwargs: dict[str, Any] = {
+            "model": model or settings.CHAT_MODEL,
+            "model_provider": provider or settings.CHAT_MODEL_PROVIDER,
+        }
+        if base_url:
+            kwargs["base_url"] = base_url
+        if effective_key:
+            kwargs["api_key"] = effective_key
+
+        override = init_chat_model(**kwargs).bind_tools(tools)
+        _override_cache[cache_key] = override
+        return override
+
+    def call_model(state: AgentState, config: RunnableConfig) -> dict[str, Any]:
         messages = state["messages"]
         if not messages or not isinstance(messages[0], SystemMessage):
             messages = [SystemMessage(content=SYSTEM_PROMPT), *messages]
+
+        active_llm = _get_llm_for_config(config)
+
+        # Honor vision from configurable (frontend settings)
+        cfg = config.get("configurable") or {}
+        vision_from_cfg = cfg.get("chat_model_supports_vision")
+        if vision_from_cfg is not None:
+            vision_state["supported"] = str(vision_from_cfg).lower() in (
+                "true",
+                "1",
+                "yes",
+            )
 
         has_images = any(
             isinstance(m, ToolMessage) and isinstance(m.content, list)
@@ -145,7 +209,7 @@ def build_agent(
             has_images = False
 
         try:
-            response = llm_with_tools.invoke(messages)
+            response = active_llm.invoke(messages)
         except Exception as exc:
             if has_images:
                 logger.info(
@@ -154,7 +218,7 @@ def build_agent(
                 )
                 vision_state["supported"] = False
                 messages = _strip_images_from_messages(messages)
-                response = llm_with_tools.invoke(messages)
+                response = active_llm.invoke(messages)
             else:
                 raise
 
@@ -186,14 +250,5 @@ def build_agent(
 
 
 # ── Aegra / LangGraph Platform ─────────────────────────────────────────────
-_manager: SandboxManager | None = None
 
-
-def _get_manager() -> SandboxManager:
-    global _manager
-    if _manager is None:
-        _manager = SandboxManager()
-    return _manager
-
-
-graph = build_agent(manager=_get_manager(), checkpointer=None)
+graph = build_agent(manager=get_manager(), checkpointer=None)

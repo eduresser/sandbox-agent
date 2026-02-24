@@ -6,6 +6,8 @@ Tools are created via factory functions that bind to a shared
 
 from __future__ import annotations
 
+from langchain_core.tools import BaseTool
+
 from sandbox_agent.sandbox.manager import SandboxManager
 from sandbox_agent.tools.create_session import create_create_session_tool
 from sandbox_agent.tools.execute_code import create_execute_code_tool
@@ -15,7 +17,7 @@ from sandbox_agent.tools.import_files import create_import_files_tool
 from sandbox_agent.tools.stop_session import create_stop_session_tool
 
 
-def create_tools(manager: SandboxManager) -> list:
+def create_tools(manager: SandboxManager) -> list[BaseTool]:
     """Create all agent tools bound to the given SandboxManager.
 
     Args:

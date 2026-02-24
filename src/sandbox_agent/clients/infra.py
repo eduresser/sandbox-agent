@@ -13,21 +13,39 @@ from psycopg_pool import ConnectionPool
 from sandbox_agent.settings import get_settings
 
 
-@lru_cache(maxsize=1)
-def get_checkpointer() -> PostgresSaver:
-    """Return a cached PostgreSQL checkpointer (shared with Aegra)."""
-    settings = get_settings()
-    checkpoint_db_url = (
-        f"postgresql://{settings.POSTGRES_USER}:{settings.POSTGRES_PASSWORD}"
-        f"@{settings.POSTGRES_HOST}:{settings.POSTGRES_PORT}/{settings.POSTGRES_DB}"
+def get_db_conninfo() -> str:
+    """Return a PostgreSQL connection string built from settings.
+
+    Uses ``psycopg.conninfo.make_conninfo`` to safely escape special
+    characters in credentials (avoids f-string injection).
+    """
+    from psycopg.conninfo import make_conninfo
+
+    s = get_settings()
+    return make_conninfo(
+        host=s.POSTGRES_HOST,
+        port=s.POSTGRES_PORT,
+        dbname=s.POSTGRES_DB,
+        user=s.POSTGRES_USER,
+        password=s.POSTGRES_PASSWORD,
     )
-    pool = ConnectionPool(
-        conninfo=checkpoint_db_url,
+
+
+@lru_cache(maxsize=1)
+def get_db_pool() -> ConnectionPool:
+    """Return a cached DB connection pool for general-purpose queries."""
+    return ConnectionPool(
+        conninfo=get_db_conninfo(),
         kwargs={"autocommit": True, "row_factory": dict_row},
         min_size=1,
         max_size=4,
     )
-    checkpointer = PostgresSaver(pool)
+
+
+@lru_cache(maxsize=1)
+def get_checkpointer() -> PostgresSaver:
+    """Return a cached PostgreSQL checkpointer (shared with Aegra)."""
+    checkpointer = PostgresSaver(get_db_pool())
     checkpointer.setup()
     return checkpointer
 

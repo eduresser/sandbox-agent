@@ -4,13 +4,13 @@ from __future__ import annotations
 
 import json
 
-from langchain_core.tools import tool
+from langchain_core.tools import BaseTool, tool
 
 from sandbox_agent.sandbox.manager import SandboxManager
-from sandbox_agent.tools._helpers import error_response
+from sandbox_agent.tools._core import execute_terminal as core_execute_terminal
 
 
-def create_execute_terminal_tool(manager: SandboxManager):
+def create_execute_terminal_tool(manager: SandboxManager) -> BaseTool:
     @tool
     def execute_terminal(session_id: str, command: str) -> str:
         """Runs a shell command inside the sandbox.
@@ -23,17 +23,8 @@ def create_execute_terminal_tool(manager: SandboxManager):
         Returns:
             JSON with stdout, stderr, and exit_code.
         """
-        try:
-            result = manager.execute_terminal(session_id, command)
-        except Exception as exc:
-            return error_response(manager, exc)
-
         return json.dumps(
-            {
-                "exit_code": result.exit_code,
-                "stdout": result.stdout,
-                "stderr": result.stderr,
-            },
+            core_execute_terminal(manager, session_id, command),
             ensure_ascii=False,
         )
 

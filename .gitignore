@@ -49,6 +49,6 @@ Thumbs.db
 .cursorignore
 
 data/
-outputs/
+storage/
 
 .langgraph_api/

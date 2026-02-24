@@ -3,8 +3,18 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
+from datetime import datetime, timezone
 
 TRUNCATION_NOTICE = "\n\n... [truncated — {original} chars total, showing first {limit}]"
+
+RUNTIME_LANGUAGE: dict[str, str] = {
+    "python": "python",
+    "node": "javascript",
+    "r": "r",
+    "julia": "julia",
+}
+
+MAX_TOOL_OUTPUT_LINES = 60
 
 
 def truncate_field(value: str, max_chars: int) -> str:
@@ -16,6 +26,10 @@ def truncate_field(value: str, max_chars: int) -> str:
     )
 
 
+def _utcnow() -> datetime:
+    return datetime.now(timezone.utc)
+
+
 @dataclass
 class SessionInfo:
     """Metadata for an active sandbox session (Docker container)."""
@@ -25,8 +39,11 @@ class SessionInfo:
     container_name: str
     runtime: str
     status: str
+    thread_id: str | None = None
     dependencies: dict[str, str] = field(default_factory=dict)
     stderr: str = ""
+    created_at: datetime = field(default_factory=_utcnow)
+    last_activity: datetime = field(default_factory=_utcnow)
 
 
 @dataclass
@@ -72,13 +89,19 @@ class ImportResult:
 
 @dataclass
 class ExportFileResult:
-    """Result of exporting a single file from the sandbox to the host."""
+    """Result of exporting a single file from the sandbox (on-demand, no host copy).
 
-    source: str
-    destination: str
+    Files are registered as "released" for download via HTTP or cross-session import.
+    path is always absolute inside the container (e.g. /workspace/report.pdf).
+    download_url is set by the tool layer when the API is available.
+    """
+
+    session_id: str
+    path: str  # absolute path inside container (e.g. /workspace/report.pdf)
     success: bool
     size: int = 0
     error: str = ""
+    download_url: str | None = None
 
 
 @dataclass

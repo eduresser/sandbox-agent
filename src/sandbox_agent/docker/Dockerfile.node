@@ -1,6 +1,9 @@
 FROM node:22-slim
 
-RUN groupadd -g 65532 sandbox \
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends zip unzip \
+    && rm -rf /var/lib/apt/lists/* \
+    && groupadd -g 65532 sandbox \
     && useradd -u 65532 -g 65532 -d /home/sandbox -m sandbox \
     && mkdir -p /workspace \
     && chown sandbox:sandbox /workspace

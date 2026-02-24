@@ -4,13 +4,13 @@ from __future__ import annotations
 
 import json
 
-from langchain_core.tools import tool
+from langchain_core.tools import BaseTool, tool
 
 from sandbox_agent.sandbox.manager import SandboxManager
-from sandbox_agent.tools._helpers import error_response
+from sandbox_agent.tools._core import create_session as core_create_session
 
 
-def create_create_session_tool(manager: SandboxManager):
+def create_create_session_tool(manager: SandboxManager) -> BaseTool:
     @tool
     def create_session(
         language: str = "python",
@@ -30,23 +30,9 @@ def create_create_session_tool(manager: SandboxManager):
         Returns:
             JSON with session_id and session info.
         """
-        deps = dict(dependencies) if dependencies else {}
-
-        try:
-            info = manager.create_session(runtime=language or "python", dependencies=deps)
-        except Exception as exc:
-            return error_response(manager, exc)
-
-        result: dict = {
-            "success": True,
-            "session_id": info.session_id,
-            "runtime": info.runtime,
-            "status": info.status,
-            "dependencies": info.dependencies,
-        }
-        if info.stderr:
-            result["stderr"] = info.stderr
-
-        return json.dumps(result, ensure_ascii=False)
+        return json.dumps(
+            core_create_session(manager, language, dependencies),
+            ensure_ascii=False,
+        )
 
     return create_session

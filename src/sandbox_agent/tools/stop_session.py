@@ -4,13 +4,13 @@ from __future__ import annotations
 
 import json
 
-from langchain_core.tools import tool
+from langchain_core.tools import BaseTool, tool
 
 from sandbox_agent.sandbox.manager import SandboxManager
-from sandbox_agent.tools._helpers import error_response
+from sandbox_agent.tools._core import stop_session as core_stop_session
 
 
-def create_stop_session_tool(manager: SandboxManager):
+def create_stop_session_tool(manager: SandboxManager) -> BaseTool:
     @tool
     def stop_session(session_id: str) -> str:
         """Stops and removes the sandbox completely.
@@ -22,11 +22,9 @@ def create_stop_session_tool(manager: SandboxManager):
         Returns:
             JSON with success status.
         """
-        try:
-            success = manager.stop_session(session_id)
-        except Exception as exc:
-            return error_response(manager, exc)
-
-        return json.dumps({"success": success}, ensure_ascii=False)
+        return json.dumps(
+            core_stop_session(manager, session_id),
+            ensure_ascii=False,
+        )
 
     return stop_session

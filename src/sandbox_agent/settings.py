@@ -9,6 +9,7 @@ from functools import lru_cache
 
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
+
 class Settings(BaseSettings):
     """Sandbox Agent configuration."""
 
@@ -30,9 +31,17 @@ class Settings(BaseSettings):
     CONTAINER_CPU_QUOTA: int = 200_000
     CONTAINER_PIDS_LIMIT: int = 512
     CONTAINER_TMPFS_SIZE: str = "200m"
-    EXECUTION_TIMEOUT_SECONDS: int = 30
-    MAX_SESSIONS: int = 5
-    TERMINAL_ROOT: bool = False
+    CONTAINER_ORPHAN_MIN_AGE_SECONDS: int = 300
+    CONTAINER_EXECUTION_TIMEOUT_SECONDS: int = 30
+    CONTAINER_MAX_SESSIONS: int = 5
+    CONTAINER_MAX_SESSIONS_PER_THREAD: int = 3
+    CONTAINER_EXECUTE_AS_ROOT: bool = False
+
+    # ── Session Lifecycle / GC ──
+    SESSION_IDLE_TTL_SECONDS: int = 1800
+    SESSION_MAX_LIFETIME_SECONDS: int = 7200
+    SESSION_GC_INTERVAL_SECONDS: int = 60
+    SESSION_MAX_ACTIVE_THREADS: int = 10
 
     # ── Output Limits (characters) ──
     MAX_STDOUT_CHARS: int = 20_000
@@ -40,15 +49,18 @@ class Settings(BaseSettings):
     MAX_RESULT_CHARS: int = 20_000
     MAX_TRACEBACK_CHARS: int = 5_000
 
-    # ── Export ──
-    OUTPUT_DIR: str = "./outputs"
+    # ── Storage (uploads + exports) ──
+    STORAGE_DIR: str = "./storage"
+
+    # ── API (for download URLs in export_files) ──
+    API_BASE_URL: str = "http://127.0.0.1:8000"
 
     # ── Agent ──
     MAX_ITERATIONS: int = 25
 
     # ── Checkpointer (PostgreSQL, shared with Aegra) ──
     POSTGRES_USER: str = "sandbox_agent"
-    POSTGRES_PASSWORD: str = "sandbox_agent_secret"
+    POSTGRES_PASSWORD: str
     POSTGRES_DB: str = "sandbox_agent"
     POSTGRES_HOST: str = "localhost"
     POSTGRES_PORT: str = "5432"

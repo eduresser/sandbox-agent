@@ -37,6 +37,7 @@ COPY client/client_c.c /tmp/client_c.c
 #   Stats/ML:   glmnet, randomForest
 RUN apt-get update \
     && apt-get install -y --no-install-recommends \
+       zip unzip \
        gcc libc6-dev \
        libxml2-dev libcurl4-openssl-dev libssl-dev \
        libfontconfig1-dev libfreetype6-dev libharfbuzz-dev libfribidi-dev \

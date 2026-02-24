@@ -1,22 +1,33 @@
 """MCP Server — exposes sandbox tools via Model Context Protocol.
 
 Runs as a stdio server for integration with Cursor, Claude Desktop,
-or any MCP-compatible client. Uses the same SandboxManager as the CLI.
+or any MCP-compatible client.  Uses the same core tool functions as
+the LangGraph agent, via :mod:`sandbox_agent.tools._core`.
+
+Like the CLI, the MCP server maintains a persistent thread_id so that
+export download URLs use the standard ``/threads/{id}/files/download``
+endpoint — the same one used by the UI and CLI.
 """
 
 from __future__ import annotations
 
-import base64
-import tempfile
-import traceback
+import json
+import os
+import uuid
 from pathlib import Path
 from typing import Any
 
+# Ensure CWD is the project root so pydantic_settings can find .env
+# (Cursor may start the MCP process with a different working directory)
+_project_root = Path(__file__).resolve().parent.parent.parent
+if _project_root.is_dir() and (_project_root / ".env").exists():
+    os.chdir(_project_root)
+
 from mcp.server.fastmcp import FastMCP
 
-from sandbox_agent.sandbox.manager import ContainerDiedError, SandboxManager
-from sandbox_agent.sandbox.models import truncate_field
-from sandbox_agent.settings import get_settings
+from sandbox_agent.sandbox import get_manager
+from sandbox_agent.sandbox.manager import current_thread_id
+from sandbox_agent.tools import _core
 
 mcp = FastMCP(
     "sandbox-agent",
@@ -29,54 +40,40 @@ mcp = FastMCP(
     ),
 )
 
-_manager: SandboxManager | None = None
+# ── Persistent MCP thread ──────────────────────────────
+
+_STATE_DIR = Path(
+    os.environ.get("XDG_STATE_HOME") or os.path.expanduser("~/.local/state")
+) / "sandbox-agent"
 
 
-def _get_manager() -> SandboxManager:
-    global _manager
-    if _manager is None:
-        _manager = SandboxManager()
-    return _manager
+def _get_mcp_thread_id() -> str:
+    """Load or create a persistent thread_id for MCP sessions."""
+    path = _STATE_DIR / "mcp-thread.json"
+    if path.exists():
+        try:
+            return json.loads(path.read_text(encoding="utf-8"))["thread_id"]
+        except Exception:
+            pass
+    tid = str(uuid.uuid4())
+    _STATE_DIR.mkdir(parents=True, exist_ok=True)
+    path.write_text(json.dumps({"thread_id": tid}), encoding="utf-8")
+    return tid
 
 
-def _active_sessions(manager: SandboxManager) -> list[dict[str, str]]:
-    return [
-        {"session_id": info.session_id, "runtime": info.runtime, "status": info.status}
-        for info in manager.sessions.values()
-    ]
+_mcp_thread_id: str | None = None
 
 
-def _error_payload(manager: SandboxManager, exc: Exception) -> dict[str, Any]:
-    sessions = _active_sessions(manager)
+def _thread_id() -> str:
+    global _mcp_thread_id
+    if _mcp_thread_id is None:
+        _mcp_thread_id = _get_mcp_thread_id()
+    return _mcp_thread_id
 
-    if isinstance(exc, ContainerDiedError):
-        return {
-            "success": False,
-            "error": f"CONTAINER_DIED: {exc.reason}",
-            "session_id": exc.session_id,
-            "hint": (
-                "The sandbox container crashed. "
-                "Call stop_session to clean it up, then create_session for a fresh one."
-            ),
-            "active_sessions": sessions,
-        }
 
-    payload: dict[str, Any] = {
-        "success": False,
-        "error": f"{type(exc).__name__}: {exc}",
-        "active_sessions": sessions,
-    }
-
-    if sessions:
-        payload["hint"] = "Use one of the active session_ids listed above."
-    else:
-        payload["hint"] = "No active sessions. Call create_session first."
-
-    if "not found" not in str(exc).lower():
-        raw_tb = traceback.format_exc()
-        payload["traceback"] = truncate_field(raw_tb, get_settings().MAX_TRACEBACK_CHARS)
-
-    return payload
+def _set_thread() -> None:
+    """Set the current_thread_id context var so the manager tracks this MCP session."""
+    current_thread_id.set(_thread_id())
 
 
 # ── Tools ─────────────────────────────────────────────
@@ -101,25 +98,8 @@ def create_session(
     Returns:
         JSON with session_id and session info.
     """
-    manager = _get_manager()
-    try:
-        info = manager.create_session(
-            runtime=language or "python",
-            dependencies=dict(dependencies or {}),
-        )
-    except Exception as exc:
-        return _error_payload(manager, exc)
-
-    result: dict[str, Any] = {
-        "success": True,
-        "session_id": info.session_id,
-        "runtime": info.runtime,
-        "status": info.status,
-        "dependencies": info.dependencies,
-    }
-    if info.stderr:
-        result["stderr"] = info.stderr
-    return result
+    _set_thread()
+    return _core.create_session(get_manager(), language, dependencies)
 
 
 @mcp.tool()
@@ -138,20 +118,8 @@ def execute_code(
     Returns:
         JSON with success, stdout, stderr, result, error, and figures.
     """
-    manager = _get_manager()
-    try:
-        result = manager.execute_code(session_id, code, timeout=timeout or 30)
-    except Exception as exc:
-        return _error_payload(manager, exc)
-
-    return {
-        "success": result.success,
-        "stdout": result.stdout,
-        "stderr": result.stderr,
-        "result": result.result,
-        "error": result.error,
-        "figures": result.figures,
-    }
+    _set_thread()
+    return _core.execute_code(get_manager(), session_id, code, timeout)
 
 
 @mcp.tool()
@@ -167,17 +135,8 @@ def execute_terminal(session_id: str, command: str) -> dict[str, Any]:
     Returns:
         JSON with stdout, stderr, and exit_code.
     """
-    manager = _get_manager()
-    try:
-        result = manager.execute_terminal(session_id, command)
-    except Exception as exc:
-        return _error_payload(manager, exc)
-
-    return {
-        "exit_code": result.exit_code,
-        "stdout": result.stdout,
-        "stderr": result.stderr,
-    }
+    _set_thread()
+    return _core.execute_terminal(get_manager(), session_id, command)
 
 
 @mcp.tool()
@@ -185,103 +144,48 @@ def import_files(
     session_id: str,
     files: list[dict[str, str]],
 ) -> dict[str, Any]:
-    """Imports files or directories into the sandbox's /workspace/ directory.
+    """Imports files into the sandbox from host or from another session.
 
-    Since MCP clients don't share a filesystem with the server, each file
-    entry can provide content directly (as text or base64-encoded binary) via
-    "file_content" and "encoding" keys, OR a host path via "source".
+    Each entry can be:
+    - Host path: "source" (host path), optional "destination"
+    - Cross-session: "session_id" (source session), "path" (container path),
+      optional "destination" — file must have been exported from that session.
 
     Args:
-        session_id: ID returned by create_session.
-        files: List of file objects. Each object must have:
-            - For inline content: "file_name" (str), "file_content" (str),
-              and optionally "encoding" ("text" or "base64", default "text").
-            - For host paths: "source" (host path) and optionally
-              "destination" (name in sandbox, defaults to source filename).
-            Examples:
-              [{"file_name": "data.csv", "file_content": "a,b\\n1,2"}]
-              [{"source": "/tmp/report.pdf", "destination": "report.pdf"}]
+        session_id: ID returned by create_session (destination).
+        files: List of file objects. Examples:
+            [{"source": "/tmp/report.pdf", "destination": "report.pdf"}]
+            [{"session_id": "abc123", "path": "/workspace/out.csv", "destination": "out.csv"}]
 
     Returns:
         JSON with per-file results (source, destination, success, size, error).
     """
-    manager = _get_manager()
-    tmp_paths: list[Path] = []
-    resolved_files: list[dict[str, str]] = []
-
-    try:
-        for entry in files:
-            if "file_content" in entry:
-                fname = entry.get("file_name", "file")
-                encoding = entry.get("encoding", "text")
-                with tempfile.NamedTemporaryFile(
-                    delete=False, suffix=f"_{fname}"
-                ) as tmp:
-                    if encoding == "base64":
-                        tmp.write(base64.b64decode(entry["file_content"]))
-                    else:
-                        tmp.write(entry["file_content"].encode("utf-8"))
-                    tmp_paths.append(Path(tmp.name))
-                resolved_files.append({
-                    "source": str(tmp_paths[-1]),
-                    "destination": fname,
-                })
-            else:
-                resolved_files.append({
-                    "source": entry.get("source", ""),
-                    "destination": entry.get("destination", ""),
-                })
-
-        from dataclasses import asdict
-
-        result = manager.import_files(session_id, resolved_files)
-    except Exception as exc:
-        return _error_payload(manager, exc)
-    finally:
-        for p in tmp_paths:
-            try:
-                p.unlink(missing_ok=True)
-            except Exception:
-                pass
-
-    return asdict(result)
+    _set_thread()
+    return _core.import_files(get_manager(), session_id, list(files))
 
 
 @mcp.tool()
 def export_files(
     session_id: str,
     files: list[dict[str, str]],
-    output_dir: str | None = None,
 ) -> dict[str, Any]:
-    """Exports files or directories from the sandbox to the host filesystem.
+    """Registers files for download and cross-session import (no host copy).
 
-    Use this to deliver results (reports, images, data) to the user or to
-    transfer artifacts between sandbox sessions.
-
-    The output includes per-file source/destination mappings that can be used
-    to feed files into another container.
+    Files become available via the API download endpoint and for import_files
+    in other sessions. Result includes download_url for each file (API must
+    be running).
 
     Args:
         session_id: ID returned by create_session.
-        files: List of objects with "source" and "destination" keys.
-            source: Path inside the container (relative to /workspace/ or absolute).
-            destination: Path on the host (relative to OUTPUT_DIR or absolute).
-                If omitted, the file keeps its original name inside OUTPUT_DIR.
-            Example: [{"source": "report.pdf", "destination": "client/report.pdf"}]
-        output_dir: Override the base output directory (defaults to OUTPUT_DIR setting).
+        files: List of objects with "source" (path in container).
+            Example: [{"source": "report.pdf"}, {"source": "/workspace/data.csv"}]
 
     Returns:
-        JSON with per-file results (source, destination, success, size, error).
+        JSON with per-file results (session_id, path, success, size, error,
+        download_url). path is always absolute (e.g. /workspace/file.png).
     """
-    manager = _get_manager()
-    try:
-        from dataclasses import asdict
-
-        result = manager.export_files(session_id, list(files), output_dir=output_dir)
-    except Exception as exc:
-        return _error_payload(manager, exc)
-
-    return asdict(result)
+    _set_thread()
+    return _core.export_files(get_manager(), session_id, list(files))
 
 
 @mcp.tool()
@@ -294,13 +198,8 @@ def stop_session(session_id: str) -> dict[str, Any]:
     Returns:
         JSON with success status.
     """
-    manager = _get_manager()
-    try:
-        success = manager.stop_session(session_id)
-    except Exception as exc:
-        return _error_payload(manager, exc)
-
-    return {"success": success}
+    _set_thread()
+    return _core.stop_session(get_manager(), session_id)
 
 
 # ── Entrypoint ────────────────────────────────────────

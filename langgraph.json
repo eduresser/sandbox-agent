@@ -1,7 +1,8 @@
 {
   "dependencies": ["."],
-  "graphs": {
-    "sandbox-agent": "./src/sandbox_agent/agent/graph.py:graph"
-  },
-  "env": "./.env"
+  "graphs": {"sandbox-agent": "./src/sandbox_agent/agent/graph.py:graph"},
+  "env": "./.env",
+  "http": {
+    "app": "sandbox_agent.http_app:app"
+  }
 }
