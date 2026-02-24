@@ -7,6 +7,15 @@ from datetime import datetime, timezone
 
 TRUNCATION_NOTICE = "\n\n... [truncated — {original} chars total, showing first {limit}]"
 
+RUNTIME_LANGUAGE: dict[str, str] = {
+    "python": "python",
+    "node": "javascript",
+    "r": "r",
+    "julia": "julia",
+}
+
+MAX_TOOL_OUTPUT_LINES = 60
+
 
 def truncate_field(value: str, max_chars: int) -> str:
     """Truncate *value* to *max_chars*, appending a notice if trimmed."""
@@ -84,6 +93,7 @@ class ExportFileResult:
 
     Files are registered as "released" for download via HTTP or cross-session import.
     path is always absolute inside the container (e.g. /workspace/report.pdf).
+    download_url is set by the tool layer when the API is available.
     """
 
     session_id: str
@@ -91,6 +101,7 @@ class ExportFileResult:
     success: bool
     size: int = 0
     error: str = ""
+    download_url: str | None = None
 
 
 @dataclass

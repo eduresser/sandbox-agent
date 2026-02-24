@@ -13,11 +13,12 @@ import contextvars
 import io
 import json
 import logging
+import shlex
 import shutil
 import signal
 import subprocess
-import tarfile
 import threading
+import zipfile
 import time
 import uuid
 from datetime import datetime, timezone
@@ -47,6 +48,7 @@ current_thread_id: contextvars.ContextVar[str | None] = contextvars.ContextVar(
 
 SANDBOX_UID = 65532
 SANDBOX_GID = 65532
+
 
 RUNTIME_CONFIG: dict[str, dict[str, Any]] = {
     "python": {
@@ -124,79 +126,88 @@ class SandboxManager:
         self._start_gc()
         self._ensure_exported_files_table()
 
+    def _get_db_pool(self):
+        """Return the shared DB connection pool (lazy import to avoid circular deps)."""
+        if not hasattr(self, "_db_pool"):
+            try:
+                from sandbox_agent.clients import get_db_pool
+                self._db_pool = get_db_pool()
+            except Exception:
+                self._db_pool = None
+        return self._db_pool
+
     def _ensure_exported_files_table(self) -> None:
         """Create exported_files table in PostgreSQL for cross-process sharing."""
-        try:
-            from sandbox_agent.clients import get_db_conninfo
-            import psycopg
-        except Exception:
+        pool = self._get_db_pool()
+        if pool is None:
             return
         try:
-            with psycopg.connect(get_db_conninfo(), autocommit=True) as conn:
-                with conn.cursor() as cur:
-                    cur.execute("""
-                        CREATE TABLE IF NOT EXISTS exported_files (
-                            thread_key TEXT NOT NULL,
-                            session_id TEXT NOT NULL,
-                            path TEXT NOT NULL,
-                            PRIMARY KEY (thread_key, session_id, path)
-                        )
-                    """)
+            with pool.connection() as conn:
+                conn.execute("""
+                    CREATE TABLE IF NOT EXISTS exported_files (
+                        thread_key TEXT NOT NULL,
+                        session_id TEXT NOT NULL,
+                        path TEXT NOT NULL,
+                        PRIMARY KEY (thread_key, session_id, path)
+                    )
+                """)
         except Exception:
             logger.debug("Could not create exported_files table", exc_info=True)
 
     def _db_add_exported(self, thread_key: str, session_id: str, path: str) -> None:
+        pool = self._get_db_pool()
+        if pool is None:
+            return
         try:
-            from sandbox_agent.clients import get_db_conninfo
-            import psycopg
-            with psycopg.connect(get_db_conninfo(), autocommit=True) as conn:
-                with conn.cursor() as cur:
-                    cur.execute(
-                        "INSERT INTO exported_files (thread_key, session_id, path) VALUES (%s, %s, %s) ON CONFLICT DO NOTHING",
-                        (thread_key, session_id, path),
-                    )
+            with pool.connection() as conn:
+                conn.execute(
+                    "INSERT INTO exported_files (thread_key, session_id, path) "
+                    "VALUES (%s, %s, %s) ON CONFLICT DO NOTHING",
+                    (thread_key, session_id, path),
+                )
         except Exception:
-            pass
+            logger.debug("Failed to add exported file to DB", exc_info=True)
 
     def _db_remove_exported_session(self, session_id: str) -> None:
+        pool = self._get_db_pool()
+        if pool is None:
+            return
         try:
-            from sandbox_agent.clients import get_db_conninfo
-            import psycopg
-            with psycopg.connect(get_db_conninfo(), autocommit=True) as conn:
-                with conn.cursor() as cur:
-                    cur.execute(
-                        "DELETE FROM exported_files WHERE session_id = %s",
-                        (session_id,),
-                    )
+            with pool.connection() as conn:
+                conn.execute(
+                    "DELETE FROM exported_files WHERE session_id = %s",
+                    (session_id,),
+                )
         except Exception:
-            pass
+            logger.debug("Failed to remove exported session from DB", exc_info=True)
 
     def _db_remove_exported_thread(self, thread_key: str) -> None:
+        pool = self._get_db_pool()
+        if pool is None:
+            return
         try:
-            from sandbox_agent.clients import get_db_conninfo
-            import psycopg
-            with psycopg.connect(get_db_conninfo(), autocommit=True) as conn:
-                with conn.cursor() as cur:
-                    cur.execute(
-                        "DELETE FROM exported_files WHERE thread_key = %s",
-                        (thread_key,),
-                    )
+            with pool.connection() as conn:
+                conn.execute(
+                    "DELETE FROM exported_files WHERE thread_key = %s",
+                    (thread_key,),
+                )
         except Exception:
-            pass
+            logger.debug("Failed to remove exported thread from DB", exc_info=True)
 
     def _db_is_file_exported(self, thread_key: str, session_id: str, path: str) -> bool:
+        pool = self._get_db_pool()
+        if pool is None:
+            return False
         try:
-            from sandbox_agent.clients import get_db_conninfo
-            import psycopg
             norm = str(Path(path).resolve())
-            with psycopg.connect(get_db_conninfo(), autocommit=True) as conn:
-                with conn.cursor() as cur:
-                    cur.execute(
-                        "SELECT path FROM exported_files WHERE thread_key = %s AND session_id = %s",
-                        (thread_key, session_id),
-                    )
-                    rows = cur.fetchall()
-            for (p,) in rows:
+            with pool.connection() as conn:
+                rows = conn.execute(
+                    "SELECT path FROM exported_files "
+                    "WHERE thread_key = %s AND session_id = %s",
+                    (thread_key, session_id),
+                ).fetchall()
+            for row in rows:
+                p = row["path"] if isinstance(row, dict) else row[0]
                 if norm == p or norm.startswith(p.rstrip("/") + "/"):
                     return True
             return False
@@ -219,8 +230,28 @@ class SandboxManager:
 
     # ── Orphan Cleanup & GC ──────────────────────────────
 
+    def _db_session_has_exports(self, session_id: str) -> bool:
+        """Check if any exported files exist in the DB for this session."""
+        pool = self._get_db_pool()
+        if pool is None:
+            return False
+        try:
+            with pool.connection() as conn:
+                row = conn.execute(
+                    "SELECT 1 FROM exported_files WHERE session_id = %s LIMIT 1",
+                    (session_id,),
+                ).fetchone()
+            return row is not None
+        except Exception:
+            return False
+
     def _cleanup_orphaned_containers(self) -> None:
-        """Remove sandbox containers left over from previous runs."""
+        """Remove sandbox containers left over from previous runs.
+
+        Skips containers that have active exports in the DB or were created
+        less than ``CONTAINER_ORPHAN_MIN_AGE_SECONDS`` ago (avoids killing
+        containers managed by other processes such as the MCP server).
+        """
         try:
             containers = self.client.containers.list(
                 all=True,
@@ -230,8 +261,38 @@ class SandboxManager:
             logger.warning("Failed to list orphaned containers", exc_info=True)
             return
 
+        now = datetime.now(timezone.utc)
+
         for container in containers:
             cid = container.short_id
+            session_id = container.labels.get("session-id", "")
+
+            # Skip containers with active exports in the DB
+            if session_id and self._db_session_has_exports(session_id):
+                logger.info(
+                    "Skipping orphan cleanup for %s (session %s has DB exports)",
+                    cid, session_id,
+                )
+                continue
+
+            # Skip recently created containers
+            min_age = get_settings().CONTAINER_ORPHAN_MIN_AGE_SECONDS
+            try:
+                created_str = container.attrs.get("Created", "")
+                if created_str:
+                    created_at = datetime.fromisoformat(
+                        created_str.replace("Z", "+00:00")
+                    )
+                    age = (now - created_at).total_seconds()
+                    if age < min_age:
+                        logger.info(
+                            "Skipping orphan cleanup for %s (age %.0fs < %ds)",
+                            cid, age, min_age,
+                        )
+                        continue
+            except Exception:
+                logger.debug("Could not parse container creation time", exc_info=True)
+
             try:
                 container.stop(timeout=3)
                 container.remove(force=True)
@@ -247,7 +308,7 @@ class SandboxManager:
     def _gc_loop(self) -> None:
         settings = get_settings()
         while True:
-            time.sleep(settings.GC_INTERVAL_SECONDS)
+            time.sleep(settings.SESSION_GC_INTERVAL_SECONDS)
             try:
                 self._gc_threads()
             except Exception:
@@ -261,10 +322,8 @@ class SandboxManager:
 
     def _gc_threads(self) -> None:
         """Evict threads by TTL and capacity, deleting from DB + killing containers."""
-        try:
-            from sandbox_agent.clients import get_db_conninfo
-            import psycopg
-        except Exception:
+        pool = self._get_db_pool()
+        if pool is None:
             logger.debug("DB not available for thread GC, skipping")
             return
 
@@ -272,15 +331,13 @@ class SandboxManager:
         now = datetime.now(timezone.utc)
 
         try:
-            with psycopg.connect(get_db_conninfo(), autocommit=False) as conn:
-                with conn.cursor() as cur:
-                    cur.execute(
-                        "SELECT thread_id, updated_at "
-                        "FROM thread "
-                        "WHERE status != 'busy' "
-                        "ORDER BY updated_at DESC"
-                    )
-                    rows = cur.fetchall()
+            with pool.connection() as conn:
+                rows = conn.execute(
+                    "SELECT thread_id, updated_at "
+                    "FROM thread "
+                    "WHERE status != 'busy' "
+                    "ORDER BY updated_at DESC"
+                ).fetchall()
         except Exception:
             logger.debug("Failed to query threads for GC", exc_info=True)
             return
@@ -288,16 +345,24 @@ class SandboxManager:
         threads_to_keep: list[str] = []
         threads_to_evict: list[tuple[str, str]] = []
 
-        for thread_id, updated_at in rows:
+        for row in rows:
+            thread_id = row["thread_id"] if isinstance(row, dict) else row[0]
+            raw_ts = row["updated_at"] if isinstance(row, dict) else row[1]
+            if isinstance(raw_ts, str):
+                updated_at = datetime.fromisoformat(raw_ts.replace("Z", "+00:00"))
+            else:
+                updated_at = raw_ts
+            if updated_at.tzinfo is None:
+                updated_at = updated_at.replace(tzinfo=timezone.utc)
             idle = (now - updated_at).total_seconds()
 
             if idle > settings.SESSION_IDLE_TTL_SECONDS:
                 threads_to_evict.append((thread_id, f"idle for {idle:.0f}s"))
-            elif len(threads_to_keep) < settings.MAX_ACTIVE_THREADS:
+            elif len(threads_to_keep) < settings.SESSION_MAX_ACTIVE_THREADS:
                 threads_to_keep.append(thread_id)
             else:
                 threads_to_evict.append(
-                    (thread_id, f"exceeded max active threads ({settings.MAX_ACTIVE_THREADS})")
+                    (thread_id, f"exceeded max active threads ({settings.SESSION_MAX_ACTIVE_THREADS})")
                 )
 
         for thread_id, reason in threads_to_evict:
@@ -307,23 +372,18 @@ class SandboxManager:
 
     def _delete_thread_from_db(self, thread_id: str) -> None:
         """Delete a thread and all its checkpoint data from PostgreSQL."""
-        try:
-            from sandbox_agent.clients import get_db_conninfo
-            import psycopg
-        except Exception:
+        pool = self._get_db_pool()
+        if pool is None:
             return
 
         try:
-            with psycopg.connect(get_db_conninfo(), autocommit=False) as conn:
-                with conn.cursor() as cur:
-                    for table in ("checkpoint_writes", "checkpoint_blobs", "checkpoints"):
-                        cur.execute(
-                            f"DELETE FROM {table} WHERE thread_id = %s",  # noqa: S608
-                            (thread_id,),
-                        )
-                    # CASCADE deletes runs automatically
-                    cur.execute("DELETE FROM thread WHERE thread_id = %s", (thread_id,))
-                conn.commit()
+            with pool.connection() as conn:
+                for table in ("checkpoint_writes", "checkpoint_blobs", "checkpoints"):
+                    conn.execute(
+                        f"DELETE FROM {table} WHERE thread_id = %s",  # noqa: S608
+                        (thread_id,),
+                    )
+                conn.execute("DELETE FROM thread WHERE thread_id = %s", (thread_id,))
             logger.info("GC: deleted thread %s from DB", thread_id[:12])
         except Exception:
             logger.warning("GC: failed to delete thread %s from DB", thread_id[:12], exc_info=True)
@@ -403,7 +463,7 @@ class SandboxManager:
                 try:
                     exit_code = state.attrs.get("State", {}).get("ExitCode")
                 except Exception:
-                    pass
+                    logger.debug("Could not read container exit code", exc_info=True)
             raise ContainerDiedError(session_id, reason, exit_code)
 
     # ── Kernel Communication ───────────────────────────
@@ -436,7 +496,33 @@ class SandboxManager:
                 f"docker exec failed (rc={result.returncode}): {result.stderr[:500]}"
             )
 
-        return json.loads(result.stdout)
+        raw = (result.stdout or "").strip()
+        if not raw:
+            return {
+                "success": False,
+                "stdout": "",
+                "stderr": "",
+                "result": None,
+                "error": {
+                    "type": "RuntimeError",
+                    "message": "Kernel returned empty response",
+                },
+                "figures": [],
+            }
+        try:
+            return json.loads(raw)
+        except json.JSONDecodeError:
+            return {
+                "success": False,
+                "stdout": "",
+                "stderr": (result.stderr or "")[:500],
+                "result": None,
+                "error": {
+                    "type": "RuntimeError",
+                    "message": f"Kernel returned invalid JSON: {raw[:200]!r}",
+                },
+                "figures": [],
+            }
 
     def _wait_for_kernel(self, session_id: str, timeout: int = 60) -> None:
         deadline = time.time() + timeout
@@ -470,17 +556,17 @@ class SandboxManager:
             raise ValueError(f"Runtime '{runtime}' not supported. Use: {list(RUNTIME_CONFIG)}")
 
         with self._lock:
-            if len(self.sessions) >= settings.MAX_SESSIONS:
+            if len(self.sessions) >= settings.CONTAINER_MAX_SESSIONS:
                 raise RuntimeError(
-                    f"Maximum number of sessions ({settings.MAX_SESSIONS}) reached. "
+                    f"Maximum number of sessions ({settings.CONTAINER_MAX_SESSIONS}) reached. "
                     "Stop an existing session first."
                 )
 
             if thread_id is not None:
                 thread_count = len(self.thread_sessions.get(thread_id, set()))
-                if thread_count >= settings.MAX_SESSIONS_PER_THREAD:
+                if thread_count >= settings.CONTAINER_MAX_SESSIONS_PER_THREAD:
                     raise RuntimeError(
-                        f"Maximum sessions per conversation ({settings.MAX_SESSIONS_PER_THREAD}) reached. "
+                        f"Maximum sessions per conversation ({settings.CONTAINER_MAX_SESSIONS_PER_THREAD}) reached. "
                         "Stop an existing session first."
                     )
 
@@ -542,7 +628,7 @@ class SandboxManager:
         self._check_session(session_id)
         self._touch_session(session_id)
         settings = get_settings()
-        timeout = timeout or settings.EXECUTION_TIMEOUT_SECONDS
+        timeout = timeout or settings.CONTAINER_EXECUTION_TIMEOUT_SECONDS
 
         try:
             resp = self._send_to_kernel(
@@ -586,7 +672,7 @@ class SandboxManager:
             ["sh", "-c", command],
             demux=True,
             workdir="/workspace",
-            user="root" if settings.TERMINAL_ROOT else None,
+            user="root" if settings.CONTAINER_EXECUTE_AS_ROOT else None,
         )
 
         stdout = (output[0] or b"").decode(errors="replace")
@@ -646,7 +732,7 @@ class SandboxManager:
         self._touch_session(session_id)
         self._assert_container_alive(session_id)
         info = self.sessions[session_id]
-        thread_key = current_thread_id.get(None) or f"__mcp__{session_id}"
+        thread_key = current_thread_id.get(None) or session_id
 
         results: list[ImportFileResult] = []
         all_ok = True
@@ -687,7 +773,7 @@ class SandboxManager:
                     all_ok = False
                     continue
 
-                src_thread = src_info.thread_id or f"__mcp__{src_session_id}"
+                src_thread = src_info.thread_id or src_session_id
                 if src_thread != thread_key:
                     results.append(ImportFileResult(
                         source=f"{src_session_id}:{src_path_norm}",
@@ -710,43 +796,72 @@ class SandboxManager:
 
                 try:
                     src_container = src_info.container_name
-                    proc_tar = subprocess.Popen(
+                    parent = str(Path(src_path_norm).parent)
+                    name = Path(src_path_norm).name
+                    cmd = f"cd {shlex.quote(parent)} && zip -r - {shlex.quote(name)}"
+                    tmp_zip = f"/workspace/.import_{uuid.uuid4().hex[:12]}.zip"
+                    proc_zip = subprocess.Popen(
                         [
                             "docker", "exec", "-i", src_container,
-                            "tar", "cf", "-", "-C",
-                            str(Path(src_path_norm).parent),
-                            Path(src_path_norm).name,
+                            "sh", "-c", cmd,
                         ],
                         stdout=subprocess.PIPE,
                         stderr=subprocess.PIPE,
                     )
-                    proc_extract = subprocess.run(
+                    proc_cat = subprocess.run(
                         [
                             "docker", "exec", "-i", info.container_name,
-                            "tar", "xf", "-", "-C", "/workspace",
+                            "sh", "-c", f"cat > {shlex.quote(tmp_zip)}",
                         ],
-                        stdin=proc_tar.stdout,
+                        stdin=proc_zip.stdout,
                         capture_output=True,
                         timeout=120,
                     )
-                    proc_tar.wait()
-                    if proc_tar.returncode != 0:
-                        err = (proc_tar.stderr.read() or b"").decode(errors="replace")[:500]
+                    proc_zip.wait()
+                    proc_extract = subprocess.run(
+                        [
+                            "docker", "exec", "-i", info.container_name,
+                            "unzip", "-q", "-o", "-d", "/workspace", tmp_zip,
+                        ],
+                        capture_output=True,
+                        timeout=120,
+                    )
+                    subprocess.run(
+                        ["docker", "exec", "-i", info.container_name, "rm", "-f", tmp_zip],
+                        capture_output=True,
+                        timeout=10,
+                    )
+                    if proc_zip.returncode != 0:
+                        err = (proc_zip.stderr.read() or b"").decode(errors="replace")[:500]
                         results.append(ImportFileResult(
                             source=f"{src_session_id}:{src_path_norm}",
                             destination=remote_path,
                             success=False,
-                            error=f"tar failed: {err}",
+                            error=f"zip failed: {err}",
+                        ))
+                        all_ok = False
+                        continue
+                    if proc_cat.returncode != 0:
+                        err = (proc_cat.stderr or b"").decode(errors="replace")[:500]
+                        results.append(ImportFileResult(
+                            source=f"{src_session_id}:{src_path_norm}",
+                            destination=remote_path,
+                            success=False,
+                            error=f"Failed to write zip to container: {err}",
                         ))
                         all_ok = False
                         continue
                     if proc_extract.returncode != 0:
                         err = proc_extract.stderr.decode(errors="replace")[:500]
+                        if not err and proc_extract.stdout:
+                            err = proc_extract.stdout.decode(errors="replace")[:500]
+                        if not err:
+                            err = f"exit code {proc_extract.returncode}"
                         results.append(ImportFileResult(
                             source=f"{src_session_id}:{src_path_norm}",
                             destination=remote_path,
                             success=False,
-                            error=f"tar extract failed: {err}",
+                            error=f"unzip failed: {err}",
                         ))
                         all_ok = False
                         continue
@@ -782,7 +897,7 @@ class SandboxManager:
                             if parts and parts[0].isdigit():
                                 size = int(parts[0])
                     except Exception:
-                        pass
+                        logger.debug("Could not determine imported file size", exc_info=True)
 
                     results.append(ImportFileResult(
                         source=f"{src_session_id}:{src_path_norm}",
@@ -828,27 +943,59 @@ class SandboxManager:
                     else:
                         size = sum(f.stat().st_size for f in local_path.rglob("*") if f.is_file())
 
-                    tar_buf = io.BytesIO()
-                    with tarfile.open(fileobj=tar_buf, mode="w") as tar:
-                        tar.add(str(local_path), arcname=Path(remote_path).name)
-                    tar_buf.seek(0)
+                    zip_buf = io.BytesIO()
+                    arcname = Path(remote_path).name
+                    with zipfile.ZipFile(zip_buf, "w", zipfile.ZIP_DEFLATED) as zf:
+                        if local_path.is_file():
+                            zf.write(local_path, arcname)
+                        else:
+                            for f in local_path.rglob("*"):
+                                if f.is_file():
+                                    zf.write(f, arcname / f.relative_to(local_path))
+                    zip_buf.seek(0)
+                    zip_bytes = zip_buf.read()
 
                     dest_dir = str(Path(remote_path).parent)
-                    proc = subprocess.run(
+                    tmp_zip = f"/workspace/.import_{uuid.uuid4().hex[:12]}.zip"
+                    proc_cat = subprocess.run(
                         [
                             "docker", "exec", "-i", info.container_name,
-                            "tar", "xf", "-", "-C", dest_dir,
+                            "sh", "-c", f"cat > {shlex.quote(tmp_zip)}",
                         ],
-                        input=tar_buf.read(),
+                        input=zip_bytes,
                         capture_output=True,
                         timeout=120,
                     )
-
-                    if proc.returncode != 0:
-                        err = proc.stderr.decode(errors="replace")[:500]
+                    proc = subprocess.run(
+                        [
+                            "docker", "exec", "-i", info.container_name,
+                            "unzip", "-q", "-o", "-d", dest_dir, tmp_zip,
+                        ],
+                        capture_output=True,
+                        timeout=120,
+                    )
+                    subprocess.run(
+                        ["docker", "exec", "-i", info.container_name, "rm", "-f", tmp_zip],
+                        capture_output=True,
+                        timeout=10,
+                    )
+                    if proc_cat.returncode != 0:
+                        err = (proc_cat.stderr or b"").decode(errors="replace")[:500]
                         results.append(ImportFileResult(
                             source=src, destination=remote_path, success=False,
-                            error=f"tar extract failed: {err}",
+                            error=f"Failed to write zip to container: {err}",
+                        ))
+                        all_ok = False
+                        continue
+                    if proc.returncode != 0:
+                        err = proc.stderr.decode(errors="replace")[:500]
+                        if not err and proc.stdout:
+                            err = proc.stdout.decode(errors="replace")[:500]
+                        if not err:
+                            err = f"exit code {proc.returncode}"
+                        results.append(ImportFileResult(
+                            source=src, destination=remote_path, success=False,
+                            error=f"unzip failed: {err}",
                         ))
                         all_ok = False
                         continue
@@ -892,7 +1039,7 @@ class SandboxManager:
         self._assert_container_alive(session_id)
         info = self.sessions[session_id]
 
-        thread_key = current_thread_id.get(None) or f"__mcp__{session_id}"
+        thread_key = current_thread_id.get(None) or session_id
 
         results: list[ExportFileResult] = []
         all_ok = True
@@ -946,7 +1093,7 @@ class SandboxManager:
                         if parts and parts[0].isdigit():
                             size = int(parts[0])
                 except Exception:
-                    pass
+                    logger.debug("Could not determine exported file size", exc_info=True)
 
                 with self._lock:
                     self._exported_files.setdefault(thread_key, {}).setdefault(
@@ -987,7 +1134,7 @@ class SandboxManager:
     ) -> bool:
         """Return True if path is a regular file (not directory) in the container."""
         if not self.is_file_exported(
-            thread_id if thread_id else f"__mcp__{session_id}",
+            thread_id if thread_id else session_id,
             session_id,
             path,
         ):
@@ -1015,7 +1162,7 @@ class SandboxManager:
         path: str,
     ) -> Generator[bytes, None, None]:
         """Stream bytes from file in container. Raises ValueError if not released."""
-        key = thread_id if thread_id else f"__mcp__{session_id}"
+        key = thread_id if thread_id else session_id
         if not self.is_file_exported(key, session_id, path):
             raise ValueError(f"File not exported: {session_id}:{path}")
         container_path = path if path.startswith("/") else f"/workspace/{path}"
@@ -1030,7 +1177,7 @@ class SandboxManager:
         if session_id in self._containers:
             self._check_session(session_id)
 
-        # Single file: stream raw bytes. Directory: stream tar.
+        # Single file: stream raw bytes. Directory: stream zip.
         is_file = subprocess.run(
             ["docker", "exec", "-i", container_name, "test", "-f", container_path],
             capture_output=True,
@@ -1044,11 +1191,12 @@ class SandboxManager:
                 stderr=subprocess.PIPE,
             )
         else:
+            parent = str(Path(container_path).parent)
+            name = Path(container_path).name
             proc = subprocess.Popen(
                 [
                     "docker", "exec", "-i", container_name,
-                    "tar", "cf", "-", "-C", str(Path(container_path).parent),
-                    Path(container_path).name,
+                    "sh", "-c", f"cd {shlex.quote(parent)} && zip -r - {shlex.quote(name)}",
                 ],
                 stdout=subprocess.PIPE,
                 stderr=subprocess.PIPE,
@@ -1079,7 +1227,7 @@ class SandboxManager:
 
             # Remove exported files registry for this session
             if info:
-                thread_key = info.thread_id or f"__mcp__{session_id}"
+                thread_key = info.thread_id or session_id
                 if thread_key in self._exported_files:
                     self._exported_files[thread_key].pop(session_id, None)
                     if not self._exported_files[thread_key]:
@@ -1093,7 +1241,9 @@ class SandboxManager:
             container.stop(timeout=3)
             container.remove(force=True)
         except Exception:
-            pass
+            logger.debug(
+                "Failed to stop/remove container for session %s", session_id, exc_info=True
+            )
 
         return True
 
@@ -1117,7 +1267,9 @@ class SandboxManager:
             try:
                 shutil.rmtree(thread_dir, ignore_errors=True)
             except Exception:
-                pass
+                logger.debug(
+                    "Failed to remove storage for thread %s", thread_id[:12], exc_info=True
+                )
 
         return count
 
@@ -1136,7 +1288,7 @@ class SandboxManager:
             p = Path("/workspace") / p
         resolved = p.resolve()
         workspace = Path("/workspace").resolve()
-        if not str(resolved).startswith(str(workspace)):
+        if not resolved.is_relative_to(workspace):
             raise ValueError(f"Path outside /workspace: {path}")
         return str(resolved)
 
