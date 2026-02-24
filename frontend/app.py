@@ -8,6 +8,7 @@ from pathlib import Path
 import streamlit as st
 
 from api_client import AegraClient
+from config import load_config, save_config
 from utils import (
     ParsedToolResult,
     build_user_content,
@@ -178,9 +179,11 @@ _DEFAULTS: dict = {
     "thread_previews": {},
 }
 
+# Load persisted config (secure storage: keyring for API key, JSON for rest)
+_persisted = load_config()
 for key, default in _DEFAULTS.items():
     if key not in st.session_state:
-        st.session_state[key] = default
+        st.session_state[key] = _persisted.get(key, default)
 
 
 # ── API Client ──────────────────────────────────────────
@@ -211,6 +214,9 @@ def _get_configurable() -> dict[str, str]:
         cfg["chat_model_api_key"] = st.session_state.chat_model_api_key
     if st.session_state.chat_model_base_url:
         cfg["chat_model_base_url"] = st.session_state.chat_model_base_url
+    cfg["chat_model_supports_vision"] = str(
+        st.session_state.chat_model_supports_vision
+    ).lower()
     return cfg
 
 
@@ -367,6 +373,16 @@ def _settings_dialog() -> None:
         st.session_state.chat_model_api_key = new_api_key
         st.session_state.chat_model_base_url = new_base_url
         st.session_state.chat_model_supports_vision = new_vision
+        save_config(
+            {
+                "chat_model": new_model,
+                "chat_model_provider": new_provider,
+                "chat_model_api_key": new_api_key,
+                "chat_model_base_url": new_base_url,
+                "chat_model_supports_vision": new_vision,
+            }
+        )
+        st.toast("Configurações guardadas de forma segura.", icon="\u2705")
         st.rerun()
 
 

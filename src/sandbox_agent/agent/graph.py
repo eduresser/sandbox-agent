@@ -111,7 +111,11 @@ def build_agent(
         "supported": vision_override,
     }
 
-    def _vision_enabled() -> bool:
+    def _vision_enabled(config: RunnableConfig) -> bool:
+        cfg = config.get("configurable") or {}
+        vision_from_cfg = cfg.get("chat_model_supports_vision")
+        if vision_from_cfg is not None:
+            return str(vision_from_cfg).lower() in ("true", "1", "yes")
         v = vision_state["supported"]
         return v is True or v is None  # None means "try it"
 
@@ -128,7 +132,9 @@ def build_agent(
                 raw_result = tool_fn.invoke(tc["args"])
 
                 if tc["name"] == "execute_code":
-                    content = _process_execute_code_content(raw_result, _vision_enabled())
+                    content = _process_execute_code_content(
+                        raw_result, _vision_enabled(config)
+                    )
                 else:
                     content = raw_result
 
@@ -182,6 +188,16 @@ def build_agent(
             messages = [SystemMessage(content=SYSTEM_PROMPT), *messages]
 
         active_llm = _get_llm_for_config(config)
+
+        # Honor vision from configurable (frontend settings)
+        cfg = config.get("configurable") or {}
+        vision_from_cfg = cfg.get("chat_model_supports_vision")
+        if vision_from_cfg is not None:
+            vision_state["supported"] = str(vision_from_cfg).lower() in (
+                "true",
+                "1",
+                "yes",
+            )
 
         has_images = any(
             isinstance(m, ToolMessage) and isinstance(m.content, list)
