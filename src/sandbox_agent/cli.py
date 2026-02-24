@@ -1,16 +1,21 @@
 """Interactive CLI for the Sandbox Agent.
 
 Unified entry point with subcommands:
-  sandbox-agent cli      — interactive CLI
+  sandbox-agent cli      — interactive CLI (API client with Rich rendering)
   sandbox-agent mcp      — MCP server
-  sandbox-agent api     — REST API (Aegra)
-  sandbox-agent ui      — Streamlit UI (starts API if not running)
+  sandbox-agent api      — REST API (Aegra)
+  sandbox-agent ui       — Streamlit UI (starts API if not running)
+
+The CLI operates as a thin client on top of the Aegra API — the same
+API that the Streamlit frontend uses.  This ensures that export URLs,
+thread persistence, and all other features work identically everywhere.
 """
 
 from __future__ import annotations
 
 import json
 import logging
+import os
 import subprocess
 import sys
 import time
@@ -18,24 +23,46 @@ import urllib.request
 from pathlib import Path
 from typing import Any
 
-from langchain_core.messages import AIMessage, HumanMessage, ToolMessage
 from rich.console import Console
 from rich.markdown import Markdown
 from rich.panel import Panel
 from rich.syntax import Syntax
 from rich.text import Text
 
-from sandbox_agent.agent.graph import build_agent
-from sandbox_agent.clients import get_checkpointer
-from sandbox_agent.sandbox.manager import SandboxManager
 from sandbox_agent.settings import get_settings
 
-logging.disable(logging.CRITICAL)
+for _logger_name in ("sandbox_agent", "httpx", "docker", "langchain", "langgraph"):
+    logging.getLogger(_logger_name).setLevel(logging.WARNING)
 
-_MAX_TOOL_OUTPUT_LINES = 60
+_console = Console()
+
+# ── Persistent CLI state ────────────────────────────────────────────────
+
+_CLI_STATE_DIR = Path(
+    os.environ.get("XDG_STATE_HOME") or os.path.expanduser("~/.local/state")
+) / "sandbox-agent"
 
 
-_RUNTIME_LEXER: dict[str, str] = {
+def _load_cli_thread_id() -> str | None:
+    path = _CLI_STATE_DIR / "cli-thread.json"
+    if not path.exists():
+        return None
+    try:
+        data = json.loads(path.read_text(encoding="utf-8"))
+        return data.get("thread_id")
+    except Exception:
+        return None
+
+
+def _save_cli_thread_id(thread_id: str) -> None:
+    _CLI_STATE_DIR.mkdir(parents=True, exist_ok=True)
+    path = _CLI_STATE_DIR / "cli-thread.json"
+    path.write_text(json.dumps({"thread_id": thread_id}), encoding="utf-8")
+
+
+# ── Session tracking (for syntax highlighting) ─────────────────────────
+
+_RUNTIME_LANGUAGE: dict[str, str] = {
     "python": "python",
     "node": "javascript",
     "r": "r",
@@ -43,18 +70,36 @@ _RUNTIME_LEXER: dict[str, str] = {
 }
 
 
-def _format_tool_input(tool_call: dict[str, Any], manager: SandboxManager | None = None) -> Panel:
+def _track_sessions(messages: list[dict], sessions: dict[str, str]) -> None:
+    """Update *sessions* (session_id -> runtime) from tool messages."""
+    for msg in messages:
+        if msg.get("type") not in ("tool", "ToolMessage"):
+            continue
+        name = msg.get("name", "")
+        if name != "create_session":
+            continue
+        content = msg.get("content", "")
+        try:
+            data = json.loads(content) if isinstance(content, str) else content
+        except (json.JSONDecodeError, TypeError):
+            continue
+        if isinstance(data, dict) and data.get("session_id"):
+            sessions[data["session_id"]] = data.get("runtime", "python")
+
+
+# ── Rich formatting ─────────────────────────────────────────────────────
+
+MAX_TOOL_OUTPUT_LINES = 60
+
+
+def _format_tool_input(tool_call: dict[str, Any], sessions: dict[str, str]) -> Panel:
     name = tool_call.get("name", "?")
     args = tool_call.get("args", {})
 
     if name == "execute_code" and "code" in args:
         code = args["code"]
-        lexer = "python"
         session_id = args.get("session_id", "")
-        if manager and session_id:
-            info = manager.sessions.get(session_id)
-            if info:
-                lexer = _RUNTIME_LEXER.get(info.runtime, "python")
+        lexer = _RUNTIME_LANGUAGE.get(sessions.get(session_id, ""), "python")
         body = Syntax(code, lexer, theme="monokai", line_numbers=True, word_wrap=True)
     elif name == "execute_terminal" and "command" in args:
         body = Syntax(args["command"], "bash", theme="monokai", word_wrap=True)
@@ -70,7 +115,6 @@ def _format_tool_input(tool_call: dict[str, Any], manager: SandboxManager | None
 
 
 def _extract_text_content(content: Any) -> str:
-    """Extract displayable text from a ToolMessage content (string or multimodal list)."""
     if isinstance(content, str):
         return content
     if isinstance(content, list):
@@ -80,11 +124,12 @@ def _extract_text_content(content: Any) -> str:
     return str(content)
 
 
-def _format_tool_output(msg: ToolMessage) -> Panel:
-    name = msg.name or "?"
-    raw_content = msg.content
+def _format_tool_output(msg: dict) -> Panel:
+    name = msg.get("name", "?")
+    raw_content = msg.get("content", "")
     text_content = _extract_text_content(raw_content)
 
+    parsed = None
     try:
         parsed = json.loads(text_content) if isinstance(text_content, str) else text_content
         formatted = json.dumps(parsed, indent=2, ensure_ascii=False, default=str)
@@ -92,22 +137,13 @@ def _format_tool_output(msg: ToolMessage) -> Panel:
         formatted = str(text_content)
 
     lines = formatted.splitlines()
-    if len(lines) > _MAX_TOOL_OUTPUT_LINES:
-        visible = lines[:_MAX_TOOL_OUTPUT_LINES]
-        omitted = len(lines) - _MAX_TOOL_OUTPUT_LINES
+    if len(lines) > MAX_TOOL_OUTPUT_LINES:
+        visible = lines[:MAX_TOOL_OUTPUT_LINES]
+        omitted = len(lines) - MAX_TOOL_OUTPUT_LINES
         visible.append(f"\n... +{omitted} linhas omitidas ...")
         formatted = "\n".join(visible)
 
-    is_error = False
-    try:
-        parsed_check = (
-            json.loads(text_content) if isinstance(text_content, str) else text_content
-        )
-        if isinstance(parsed_check, dict) and parsed_check.get("success") is False:
-            is_error = True
-    except (json.JSONDecodeError, TypeError):
-        pass
-
+    is_error = isinstance(parsed, dict) and parsed.get("success") is False
     if not is_error and isinstance(text_content, str) and "Error invoking tool" in text_content:
         is_error = True
 
@@ -122,8 +158,10 @@ def _format_tool_output(msg: ToolMessage) -> Panel:
     )
 
 
+# ── API lifecycle ───────────────────────────────────────────────────────
+
+
 def _api_is_healthy(url: str = "http://127.0.0.1:8000") -> bool:
-    """Check if the Aegra API is reachable."""
     try:
         req = urllib.request.Request(f"{url.rstrip('/')}/health")
         with urllib.request.urlopen(req, timeout=3) as r:
@@ -132,12 +170,33 @@ def _api_is_healthy(url: str = "http://127.0.0.1:8000") -> bool:
         return False
 
 
-def _run_api() -> None:
-    """Run the Aegra API (aegra dev)."""
-    subprocess.run(
+def _ensure_api_running(console: Console) -> bool:
+    """Start the Aegra API in background if not already running. Returns True when healthy."""
+    api_url = get_settings().API_BASE_URL
+    if _api_is_healthy(api_url):
+        return True
+
+    console.print("[dim]API not detected. Starting in background...[/dim]")
+    subprocess.Popen(
         ["aegra", "dev"],
         cwd=Path.cwd(),
+        stdout=subprocess.DEVNULL,
+        stderr=subprocess.DEVNULL,
+        start_new_session=True,
     )
+    for _ in range(30):
+        time.sleep(1)
+        if _api_is_healthy(api_url):
+            console.print(f"[green]API pronta em {api_url}[/green]")
+            return True
+
+    console.print("[yellow]Timeout waiting for API.[/yellow]")
+    return False
+
+
+def _run_api() -> None:
+    """Run the Aegra API (aegra dev)."""
+    subprocess.run(["aegra", "dev"], cwd=Path.cwd())
     sys.exit(0)
 
 
@@ -145,29 +204,27 @@ def _run_ui(start_api_if_needed: bool = True) -> None:
     """Run the Streamlit frontend. Starts API in background if not running."""
     api_url = "http://127.0.0.1:8000"
     if _api_is_healthy(api_url):
-        pass  # API already running
+        pass
     elif start_api_if_needed:
-        proc = subprocess.Popen(
+        subprocess.Popen(
             ["aegra", "dev"],
             cwd=Path.cwd(),
             stdout=subprocess.DEVNULL,
             stderr=subprocess.DEVNULL,
             start_new_session=True,
         )
-        console = __import__("rich.console", fromlist=["Console"]).Console()
-        console.print("[dim]API not detected. Starting in background...[/dim]")
+        _console.print("[dim]API not detected. Starting in background...[/dim]")
         for _ in range(30):
             time.sleep(1)
             if _api_is_healthy(api_url):
-                console.print("[green]API pronta em http://localhost:8000[/green]")
+                _console.print("[green]API pronta em http://localhost:8000[/green]")
                 break
         else:
-            console.print(
+            _console.print(
                 "[yellow]Timeout waiting for API. The frontend may fail to connect.[/yellow]"
             )
     else:
-        console = __import__("rich.console", fromlist=["Console"]).Console()
-        console.print(
+        _console.print(
             "[red]API is not running. Execute [bold]uv run sandbox-agent api[/bold] first.[/red]"
         )
         sys.exit(1)
@@ -181,8 +238,7 @@ def _run_ui(start_api_if_needed: bool = True) -> None:
     try:
         import streamlit.web.cli as stcli
     except ImportError:
-        console = __import__("rich.console", fromlist=["Console"]).Console()
-        console.print(
+        _console.print(
             "[red]Frontend dependencies not installed.[/red]\n"
             "Execute: [cyan]uv sync --extra frontend[/cyan]"
         )
@@ -197,77 +253,85 @@ def run_frontend_entry() -> None:
 
 
 def _print_help() -> None:
-    console = __import__("rich.console", fromlist=["Console"]).Console()
-    console.print(
+    _console.print(
         "[bold]sandbox-agent[/bold] — LangGraph agent with sandboxed execution\n"
         "\n[cyan]Uso:[/cyan]\n"
         "  uv run sandbox-agent [command]\n"
         "\n[cyan]Commands:[/cyan]\n"
-        "  cli       — Interactive CLI (Rich REPL)\n"
+        "  cli       — Interactive CLI (Rich REPL, via API)\n"
         "  mcp       — MCP server (Cursor, Claude Desktop)\n"
         "  api       — REST API (Aegra)\n"
         "  ui        — Streamlit UI (starts API automatically if needed)\n"
     )
 
 
-def run_interactive_cli() -> None:
-    """Run the interactive CLI (Rich REPL)."""
-    console = Console()
+# ── Interactive CLI (API client) ────────────────────────────────────────
 
+
+def run_interactive_cli() -> None:
+    """Run the interactive CLI as a thin client on top of the Aegra API."""
+    from sandbox_agent.clients import AegraClient
+
+    console = Console()
     settings = get_settings()
-    if not settings.CHAT_MODEL_API_KEY:
+
+    # Ensure API is running (auto-start if needed)
+    if not _ensure_api_running(console):
         console.print(
             Panel(
-                "[bold red]CHAT_MODEL_API_KEY not configured.[/bold red]\n\n"
-                "Configure via environment variable or .env file.\n"
-                "See .env.example for reference.",
-                title="Configuration Error",
+                "[bold red]Cannot start or reach the API.[/bold red]\n\n"
+                "Start manually with: [cyan]uv run sandbox-agent api[/cyan]",
+                title="API Error",
                 border_style="red",
             )
         )
         sys.exit(1)
 
-    checkpointer = get_checkpointer()
+    client = AegraClient(base_url=settings.API_BASE_URL)
 
+    # Thread management: resume last CLI thread or create new
+    thread_id = _load_cli_thread_id()
+    if thread_id:
+        try:
+            client.get_thread(thread_id)
+        except Exception:
+            thread_id = None
+
+    if not thread_id:
+        try:
+            thread = client.create_thread(metadata={"source": "cli"})
+            thread_id = thread["thread_id"]
+            _save_cli_thread_id(thread_id)
+        except Exception as exc:
+            console.print(
+                Panel(
+                    f"[bold red]Failed to create thread:[/bold red]\n\n{exc}",
+                    title="API Error",
+                    border_style="red",
+                )
+            )
+            sys.exit(1)
+
+    # Track sessions for syntax highlighting
+    sessions: dict[str, str] = {}
+
+    # Load existing messages to populate session tracker
     try:
-        manager = SandboxManager()
-    except Exception as exc:
-        msg = str(exc)
-        if "Permission denied" in msg or "PermissionError" in msg:
-            console.print(
-                Panel(
-                    "[bold red]No permission to access Docker.[/bold red]\n\n"
-                    "Add your user to the docker group:\n"
-                    "  [cyan]sudo usermod -aG docker $USER[/cyan]\n\n"
-                    "Then logout/login or run in the current terminal:\n"
-                    "  [cyan]newgrp docker[/cyan]",
-                    title="Permission Error",
-                    border_style="red",
-                )
-            )
-        else:
-            console.print(
-                Panel(
-                    f"[bold red]Error connecting to Docker:[/bold red]\n\n{msg}\n\n"
-                    "Check if Docker is installed and running:\n"
-                    "  [cyan]sudo systemctl start docker[/cyan]",
-                    title="Docker Error",
-                    border_style="red",
-                )
-            )
-        sys.exit(1)
-
-    app = build_agent(manager=manager, checkpointer=checkpointer)
+        state = client.get_thread_state(thread_id)
+        existing_msgs = state.get("values", {}).get("messages", [])
+        _track_sessions(existing_msgs, sessions)
+    except Exception:
+        existing_msgs = []
 
     console.print()
     console.print(
         Panel(
-            "[bold]Sandbox Agent[/bold]\n\n"
+            "[bold]Sandbox Agent[/bold]  [dim](API mode)[/dim]\n\n"
             f"Model: [cyan]{settings.CHAT_MODEL}[/cyan]\n"
-            f"Memory limit: [cyan]{settings.CONTAINER_MEMORY_LIMIT}[/cyan]\n"
-            f"Timeout: [cyan]{settings.EXECUTION_TIMEOUT_SECONDS}s[/cyan] | "
-            f"Max sessions: [cyan]{settings.MAX_SESSIONS}[/cyan]\n\n"
-            "[dim]Enter your question or command. Use 'exit' to end.[/dim]",
+            f"API: [cyan]{settings.API_BASE_URL}[/cyan]\n"
+            f"Thread: [dim]{thread_id}[/dim]\n\n"
+            "[dim]Enter your question or command. Use 'exit' to end.\n"
+            "Use '/new' to start a new conversation.[/dim]",
             title="Welcome",
             border_style="blue",
         )
@@ -289,41 +353,63 @@ def run_interactive_cli() -> None:
                 console.print("[dim]Goodbye![/dim]")
                 break
 
-            new_msg = HumanMessage(content=user_input)
+            if user_input.lower() == "/new":
+                try:
+                    thread = client.create_thread(metadata={"source": "cli"})
+                    thread_id = thread["thread_id"]
+                    _save_cli_thread_id(thread_id)
+                    sessions.clear()
+                    console.print(
+                        f"[green]New conversation:[/green] [dim]{thread_id}[/dim]\n"
+                    )
+                except Exception as exc:
+                    console.print(f"[red]Failed to create thread: {exc}[/red]\n")
+                continue
 
             console.print()
 
+            input_messages = [{"role": "human", "content": user_input}]
             final_ai_content = ""
+            displayed_count = 0
 
             try:
-                config: dict[str, Any] = {
-                    "recursion_limit": settings.MAX_ITERATIONS,
-                    "configurable": {"thread_id": "cli"},
-                }
-                input_messages = [new_msg]
-                state_before = app.get_state(config)
-                displayed_count = len(state_before.values.get("messages", []))
-
-                for state_snapshot in app.stream(
-                    {"messages": input_messages},
-                    config=config,
-                    stream_mode="values",
+                for event in client.stream_run(
+                    thread_id=thread_id,
+                    input_messages=input_messages,
+                    configurable={
+                        "chat_model": settings.CHAT_MODEL,
+                        "chat_model_provider": settings.CHAT_MODEL_PROVIDER,
+                        "chat_model_api_key": settings.CHAT_MODEL_API_KEY,
+                    },
                 ):
-                    all_msgs = state_snapshot.get("messages", [])
+                    if event.event != "values" or not isinstance(event.data, dict):
+                        continue
+
+                    all_msgs = event.data.get("messages", [])
                     new_msgs = all_msgs[displayed_count:]
                     displayed_count = len(all_msgs)
 
-                    for msg in new_msgs:
-                        if isinstance(msg, AIMessage) and getattr(msg, "tool_calls", None):
-                            for tc in msg.tool_calls:
-                                console.print(_format_tool_input(tc, manager))
+                    _track_sessions(new_msgs, sessions)
 
-                        if isinstance(msg, ToolMessage):
+                    for msg in new_msgs:
+                        msg_type = msg.get("type", "")
+
+                        if msg_type in ("ai", "AIMessage", "AIMessageChunk"):
+                            tool_calls = msg.get("tool_calls", [])
+                            if tool_calls:
+                                for tc in tool_calls:
+                                    console.print(_format_tool_input(tc, sessions))
+
+                            content = msg.get("content", "")
+                            if content and not tool_calls:
+                                if isinstance(content, str):
+                                    final_ai_content = content
+                                else:
+                                    final_ai_content = _extract_text_content(content)
+
+                        elif msg_type in ("tool", "ToolMessage"):
                             console.print(_format_tool_output(msg))
                             console.print()
-
-                        if isinstance(msg, AIMessage) and msg.content:
-                            final_ai_content = msg.content
 
             except Exception as exc:
                 console.print(
@@ -354,9 +440,12 @@ def run_interactive_cli() -> None:
                         )
                     )
             console.print()
+
     finally:
-        console.print("[dim]Cleaning up containers...[/dim]")
-        manager.cleanup_all()
+        client.close()
+
+
+# ── Entry point ─────────────────────────────────────────────────────────
 
 
 def main() -> None:
