@@ -81,7 +81,8 @@ class TestExportFilesManager:
         assert fr.size > 0
 
         # Verify file is in _exported_files and streamable
-        thread_key = f"__mcp__{python_session}"
+        # When current_thread_id is not set, manager uses session_id as thread_key
+        thread_key = python_session
         assert manager.is_file_exported(thread_key, python_session, fr.path)
         content = b"".join(manager.stream_exported_file(None, python_session, fr.path))
         assert b"hello world" in content
@@ -105,7 +106,7 @@ class TestExportFilesManager:
         assert "/workspace/a.txt" in paths
         assert "/workspace/b.txt" in paths
 
-        thread_key = f"__mcp__{python_session}"
+        thread_key = python_session
         assert manager.is_file_exported(thread_key, python_session, "/workspace/a.txt")
         assert manager.is_file_exported(thread_key, python_session, "/workspace/b.txt")
 
@@ -161,8 +162,9 @@ class TestExportFilesManager:
         assert result.success is True
         assert result.files[0].path == "/workspace/mydir"
         content = b"".join(manager.stream_exported_file(None, python_session, "/workspace/mydir"))
-        assert b"file1" in content
-        assert b"file2" in content
+        assert content.startswith(b"PK"), "Expected ZIP format"
+        assert b"mydir/f1.txt" in content
+        assert b"mydir/f2.txt" in content
 
     def test_export_path_traversal_rejected(self, manager, python_session):
         result = manager.export_files(
@@ -187,7 +189,7 @@ class TestExportFilesManager:
 
         manager.export_files(sid, [{"source": "cleanup_test.txt"}])
 
-        thread_key = f"__mcp__{sid}"
+        thread_key = sid
         assert manager.is_file_exported(thread_key, sid, "/workspace/cleanup_test.txt")
 
         manager.stop_session(sid)
@@ -265,22 +267,18 @@ class TestExportFilesTool:
 
 
 class TestExportFilesMCP:
-    def test_mcp_export(self, manager, python_session):
+    def test_mcp_export(self, manager, python_session, monkeypatch):
         """Test the MCP export_files function directly (not via MCP transport)."""
         _create_file_in_sandbox(manager, python_session, "mcp_test.txt", "mcp_data")
 
         from sandbox_agent import mcp_server
 
-        original_get = mcp_server._get_manager
-        mcp_server._get_manager = lambda: manager
+        monkeypatch.setattr(mcp_server, "get_manager", lambda: manager)
 
-        try:
-            result = mcp_server.export_files(
-                session_id=python_session,
-                files=[{"source": "mcp_test.txt", "destination": "mcp_test.txt"}],
-            )
-        finally:
-            mcp_server._get_manager = original_get
+        result = mcp_server.export_files(
+            session_id=python_session,
+            files=[{"source": "mcp_test.txt", "destination": "mcp_test.txt"}],
+        )
 
         assert result["success"] is True
         assert len(result["files"]) == 1
@@ -288,25 +286,23 @@ class TestExportFilesMCP:
         assert result["files"][0]["session_id"] == python_session
         assert result["files"][0]["path"] == "/workspace/mcp_test.txt"
 
-        content = b"".join(manager.stream_exported_file(None, python_session, "/workspace/mcp_test.txt"))
+        # MCP sets current_thread_id, so export uses mcp thread_id; stream accepts thread_id or session_id
+        tid = mcp_server._thread_id()
+        content = b"".join(manager.stream_exported_file(tid, python_session, "/workspace/mcp_test.txt"))
         assert b"mcp_data" in content
 
-    def test_mcp_export_returns_session_id_and_path(self, manager, python_session):
+    def test_mcp_export_returns_session_id_and_path(self, manager, python_session, monkeypatch):
         """Verify the output includes session_id and path for cross-session transfer."""
         _create_file_in_sandbox(manager, python_session, "transfer.csv", "1,2,3")
 
         from sandbox_agent import mcp_server
 
-        original_get = mcp_server._get_manager
-        mcp_server._get_manager = lambda: manager
+        monkeypatch.setattr(mcp_server, "get_manager", lambda: manager)
 
-        try:
-            result = mcp_server.export_files(
-                session_id=python_session,
-                files=[{"source": "transfer.csv", "destination": "transfer.csv"}],
-            )
-        finally:
-            mcp_server._get_manager = original_get
+        result = mcp_server.export_files(
+            session_id=python_session,
+            files=[{"source": "transfer.csv", "destination": "transfer.csv"}],
+        )
 
         file_entry = result["files"][0]
         assert "session_id" in file_entry
