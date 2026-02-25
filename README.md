@@ -66,8 +66,9 @@ All commands use the unified `sandbox-agent` entry point:
 ```bash
 uv run sandbox-agent cli       # Interactive CLI (default)
 uv run sandbox-agent mcp       # MCP server (Cursor, Claude Desktop)
-uv run sandbox-agent api       # REST API (Aegra)
-uv run sandbox-agent ui        # Streamlit UI (starts API automatically)
+uv run sandbox-agent api       # REST API (Aegra, sem reload)
+uv run sandbox-agent api dev   # REST API com hot reload
+uv run sandbox-agent ui        # Streamlit UI (requires API running)
 ```
 
 ### CLI
@@ -78,7 +79,7 @@ uv run sandbox-agent cli
 uv run sandbox-agent
 ```
 
-The CLI operates as a thin client on top of the Aegra REST API. It auto-starts the API in the background if not running. Features:
+The CLI operates as a thin client on top of the Aegra REST API. Requires the API to be running (`uv run sandbox-agent api`). Features:
 
 - [Rich](https://github.com/Textualize/rich) panels with syntax-highlighted tool I/O (per-runtime lexer)
 - Streaming agent output with Markdown rendering
@@ -118,7 +119,8 @@ The `import_files` tool accepts file content directly (as text or base64 via `fi
 Run the agent as a REST API via [Aegra](https://aegra.dev/) (self-hosted LangGraph Platform alternative):
 
 ```bash
-uv run sandbox-agent api
+uv run sandbox-agent api       # Production mode (no reload)
+uv run sandbox-agent api dev   # Development mode (hot reload)
 ```
 
 The server runs at `http://localhost:8000` with OpenAPI docs at `/docs`. Use the LangGraph SDK or curl to create assistants, threads, and stream runs. Compatible with Agent Chat UI, LangGraph Studio, and CopilotKit.
@@ -136,7 +138,8 @@ A web UI for chatting with the agent via the Aegra API:
 # Install frontend dependencies
 uv sync --extra frontend
 
-# Start the UI (starts API automatically if not running)
+# Start the API first (in another terminal), then the UI
+uv run sandbox-agent api
 uv run sandbox-agent ui
 ```
 

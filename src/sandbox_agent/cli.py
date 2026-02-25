@@ -4,7 +4,7 @@ Unified entry point with subcommands:
   sandbox-agent cli      — interactive CLI (API client with Rich rendering)
   sandbox-agent mcp      — MCP server
   sandbox-agent api      — REST API (Aegra)
-  sandbox-agent ui       — Streamlit UI (starts API if not running)
+  sandbox-agent ui       — Streamlit UI (requires API running)
 
 The CLI operates as a thin client on top of the Aegra API — the same
 API that the Streamlit frontend uses.  This ensures that export URLs,
@@ -18,7 +18,6 @@ import logging
 import os
 import subprocess
 import sys
-import time
 import urllib.request
 from pathlib import Path
 from typing import Any
@@ -171,26 +170,15 @@ def _api_is_healthy(url: str = "http://127.0.0.1:8000") -> bool:
 
 
 def _ensure_api_running(console: Console) -> bool:
-    """Start the Aegra API in background if not already running. Returns True when healthy."""
+    """Check if the Aegra API is running. Returns True when healthy."""
     api_url = get_settings().API_BASE_URL
     if _api_is_healthy(api_url):
         return True
 
-    console.print("[dim]API not detected. Starting in background...[/dim]")
-    subprocess.Popen(
-        ["aegra", "dev"],
-        cwd=Path.cwd(),
-        stdout=subprocess.DEVNULL,
-        stderr=subprocess.DEVNULL,
-        start_new_session=True,
+    console.print(
+        "[red]API is not running.[/red]\n"
+        "Start manually with: [cyan]uv run sandbox-agent api[/cyan]"
     )
-    for _ in range(30):
-        time.sleep(1)
-        if _api_is_healthy(api_url):
-            console.print(f"[green]API pronta em {api_url}[/green]")
-            return True
-
-    console.print("[yellow]Timeout waiting for API.[/yellow]")
     return False
 
 
@@ -201,32 +189,13 @@ def _run_api(dev: bool = False) -> None:
     sys.exit(0)
 
 
-def _run_ui(start_api_if_needed: bool = True) -> None:
-    """Run the Streamlit frontend. Starts API in background if not running."""
+def _run_ui() -> None:
+    """Run the Streamlit frontend. Requires API to be running."""
     api_url = "http://127.0.0.1:8000"
-    if _api_is_healthy(api_url):
-        pass
-    elif start_api_if_needed:
-        subprocess.Popen(
-            ["aegra", "dev"],
-            cwd=Path.cwd(),
-            stdout=subprocess.DEVNULL,
-            stderr=subprocess.DEVNULL,
-            start_new_session=True,
-        )
-        _console.print("[dim]API not detected. Starting in background...[/dim]")
-        for _ in range(30):
-            time.sleep(1)
-            if _api_is_healthy(api_url):
-                _console.print("[green]API pronta em http://localhost:8000[/green]")
-                break
-        else:
-            _console.print(
-                "[yellow]Timeout waiting for API. The frontend may fail to connect.[/yellow]"
-            )
-    else:
+    if not _api_is_healthy(api_url):
         _console.print(
-            "[red]API is not running. Execute [bold]uv run sandbox-agent api[/bold] first.[/red]"
+            "[red]API is not running.[/red]\n"
+            "Start manually with: [cyan]uv run sandbox-agent api[/cyan]"
         )
         sys.exit(1)
 
@@ -249,7 +218,7 @@ def _run_ui(start_api_if_needed: bool = True) -> None:
 
 
 def run_frontend_entry() -> None:
-    """Entry point for sandbox-agent-frontend (backward compat, with auto-start API)."""
+    """Entry point for sandbox-agent-frontend (backward compat)."""
     _run_ui()
 
 
@@ -263,7 +232,7 @@ def _print_help() -> None:
         "  mcp         — MCP server (Cursor, Claude Desktop)\n"
         "  api         — REST API (Aegra, sem reload)\n"
         "  api dev     — REST API com hot reload\n"
-        "  ui          — Streamlit UI (starts API automatically if needed)\n"
+        "  ui          — Streamlit UI (requires API running)\n"
     )
 
 
