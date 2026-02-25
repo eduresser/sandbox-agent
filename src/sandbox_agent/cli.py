@@ -194,9 +194,10 @@ def _ensure_api_running(console: Console) -> bool:
     return False
 
 
-def _run_api() -> None:
-    """Run the Aegra API (aegra dev)."""
-    subprocess.run(["aegra", "dev"], cwd=Path.cwd())
+def _run_api(dev: bool = False) -> None:
+    """Run the Aegra API. Use dev=True for hot reload."""
+    cmd = ["aegra", "dev"] if dev else ["aegra", "serve", "--host", "0.0.0.0", "--port", "8000"]
+    subprocess.run(cmd, cwd=Path.cwd())
     sys.exit(0)
 
 
@@ -258,10 +259,11 @@ def _print_help() -> None:
         "\n[cyan]Uso:[/cyan]\n"
         "  uv run sandbox-agent [command]\n"
         "\n[cyan]Commands:[/cyan]\n"
-        "  cli       — Interactive CLI (Rich REPL, via API)\n"
-        "  mcp       — MCP server (Cursor, Claude Desktop)\n"
-        "  api       — REST API (Aegra)\n"
-        "  ui        — Streamlit UI (starts API automatically if needed)\n"
+        "  cli         — Interactive CLI (Rich REPL, via API)\n"
+        "  mcp         — MCP server (Cursor, Claude Desktop)\n"
+        "  api         — REST API (Aegra, sem reload)\n"
+        "  api dev     — REST API com hot reload\n"
+        "  ui          — Streamlit UI (starts API automatically if needed)\n"
     )
 
 
@@ -460,7 +462,7 @@ def main() -> None:
 
         mcp_main()
     elif cmd == "api":
-        _run_api()
+        _run_api(dev=(len(args) > 1 and args[1] == "dev"))
     elif cmd == "ui":
         _run_ui()
     elif cmd in ("-h", "--help", "help"):
