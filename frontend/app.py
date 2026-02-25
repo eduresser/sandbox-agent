@@ -519,20 +519,17 @@ def _render_messages(messages: list[dict]) -> None:
 
         items, final_content = collect_tool_blocks(assistant_msgs)
 
-        last_block_idx = next(
-            (i for i in range(len(items) - 1, -1, -1) if items[i].get("type") == "block"),
-            -1,
-        )
         for idx, item in enumerate(items):
             if item.get("type") == "thought":
                 _render_thought_block(item.get("text", ""))
             elif item.get("type") == "block":
                 blk = item["block"]
                 bid = blk.get("tool_call_id", str(idx))
+                is_running = blk.get("output") is None
                 _render_tool_block(
                     blk,
                     sessions=sessions_map,
-                    expanded=(idx == last_block_idx),
+                    expanded=is_running,
                     block_id=bid,
                 )
 
@@ -545,7 +542,7 @@ def _render_thought_block(text: str) -> None:
     """Render agent thinking/reasoning block (expandable)."""
     if not text or not text.strip():
         return
-    with st.expander("\U0001f4ad Agent thinking", expanded=True):
+    with st.expander("\U0001f4ad Agent thinking", expanded=False):
         st.markdown(text)
 
 
@@ -590,12 +587,6 @@ def _render_tool_block(
 
     def _content_import_export() -> None:
         _render_content()
-        _render_file_results(
-            parsed,
-            thread_id=st.session_state.thread_id,
-            client=client,
-            key_suffix=key_suffix,
-        )
 
     def _content_create_session() -> None:
         _render_content()
@@ -613,10 +604,6 @@ def _render_tool_block(
 
     def _content_figures() -> None:
         _render_content()
-        if parsed.text_summary:
-            st.markdown(parsed.text_summary)
-        for fig_b64 in parsed.figures_b64:
-            st.image(decode_b64_image(fig_b64))
 
     def _content_generic() -> None:
         _render_content()
@@ -625,15 +612,18 @@ def _render_tool_block(
         else:
             formatted, _ = format_tool_output_display(output, name)
             st.code(formatted, language="json")
-            if parsed:
-                for fig_b64 in parsed.figures_b64:
-                    st.image(decode_b64_image(fig_b64))
 
     _special_tools = ("import_files", "export_files", "create_session", "stop_session")
     if parsed is not None and name in _special_tools:
         if name in ("import_files", "export_files") and parsed.file_results:
             with st.expander(f"\U0001f527 {name} — {status_label}", expanded=expanded):
                 _content_import_export()
+            _render_file_results(
+                parsed,
+                thread_id=st.session_state.thread_id,
+                client=client,
+                key_suffix=key_suffix,
+            )
             return
 
         if name == "create_session" and parsed.session_info:
@@ -649,11 +639,18 @@ def _render_tool_block(
         if parsed.figures_b64:
             with st.expander(f"\U0001f527 {name} — {status_label}", expanded=expanded):
                 _content_figures()
+            if parsed.text_summary:
+                st.markdown(parsed.text_summary)
+            for fig_b64 in parsed.figures_b64:
+                st.image(decode_b64_image(fig_b64))
             return
 
     # Generic output: formatted JSON/text + figures (e.g. execute_code matplotlib/ggplot)
     with st.expander(f"\U0001f527 {name} — {status_label}", expanded=expanded):
         _content_generic()
+    if parsed and parsed.figures_b64:
+        for fig_b64 in parsed.figures_b64:
+            st.image(decode_b64_image(fig_b64))
 
 
 def _render_file_results(
