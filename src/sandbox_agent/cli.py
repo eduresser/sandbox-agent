@@ -16,8 +16,10 @@ from __future__ import annotations
 import json
 import logging
 import os
+import socket
 import subprocess
 import sys
+import time
 import urllib.request
 from pathlib import Path
 from typing import Any
@@ -182,9 +184,74 @@ def _ensure_api_running(console: Console) -> bool:
     return False
 
 
+def _postgres_reachable(host: str, port: str) -> bool:
+    """Check if PostgreSQL is accepting connections."""
+    try:
+        port_int = int(port)
+        with socket.create_connection((host, port_int), timeout=2):
+            return True
+    except (socket.error, ValueError):
+        return False
+
+
+def _ensure_postgres_running(console: Console) -> bool:
+    """Start PostgreSQL via Docker if not reachable. Returns True when ready."""
+    settings = get_settings()
+    host = settings.POSTGRES_HOST
+    port = settings.POSTGRES_PORT
+
+    if _postgres_reachable(host, port):
+        return True
+
+    if host not in ("localhost", "127.0.0.1"):
+        console.print(
+            "[yellow]PostgreSQL not reachable at %s:%s.[/yellow]\n"
+            "Start your database manually or set POSTGRES_HOST=localhost to use Docker."
+            % (host, port)
+        )
+        return False
+
+    compose = Path.cwd() / "docker-compose.yml"
+    if not compose.exists():
+        console.print(
+            "[red]PostgreSQL not running and docker-compose.yml not found.[/red]\n"
+            "Run [cyan]aegra dev[/cyan] or start PostgreSQL manually."
+        )
+        return False
+
+    console.print("[dim]Starting PostgreSQL via Docker Compose...[/dim]")
+    result = subprocess.run(
+        ["docker", "compose", "up", "postgres", "-d"],
+        cwd=Path.cwd(),
+        capture_output=True,
+        text=True,
+    )
+    if result.returncode != 0:
+        console.print(
+            "[red]Failed to start PostgreSQL.[/red]\n"
+            "Ensure Docker is running. Stderr: %s" % (result.stderr or result.stdout or "")
+        )
+        return False
+
+    # Poll until reachable (--wait may not exist in older compose)
+    for _ in range(30):
+        if _postgres_reachable(host, port):
+            console.print("[green]PostgreSQL ready.[/green]")
+            return True
+        time.sleep(1)
+
+    console.print("[red]PostgreSQL did not become ready in time.[/red]")
+    return False
+
+
 def _run_api(dev: bool = False) -> None:
     """Run the Aegra API. Use dev=True for hot reload."""
-    cmd = ["aegra", "dev"] if dev else ["aegra", "serve", "--host", "0.0.0.0", "--port", "8000"]
+    if dev:
+        cmd = ["aegra", "dev"]
+    else:
+        if not _ensure_postgres_running(_console):
+            sys.exit(1)
+        cmd = ["aegra", "serve", "--host", "0.0.0.0", "--port", "8000"]
     subprocess.run(cmd, cwd=Path.cwd())
     sys.exit(0)
 
