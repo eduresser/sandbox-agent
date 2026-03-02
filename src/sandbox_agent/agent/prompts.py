@@ -396,7 +396,9 @@ PHASE 5 — LAST RESORT ONLY:
     host INTO the container. You have full access to host file paths.
   - export_files is the bridge OUT: it registers files for download and cross-session
     import. Files are NOT copied to the host; they become available via the API
-    and for import_files in other sessions.
+    and for import_files in other sessions. IMPORTANT: exported files remain
+    available ONLY while the session is active — do NOT stop a session that
+    has exported files the user may need.
   - When the user mentions any file path, you MUST use import_files to copy it
     into the sandbox, then reference it as /workspace/<filename>.
   - ALL tools require a valid session_id. Use an existing session when available.
@@ -553,6 +555,14 @@ PHASE 5 — LAST RESORT ONLY:
   <tool name="export_files">
     Registers files for download and cross-session import (no host copy).
     Files become available via the API and for import_files in other sessions.
+
+    CRITICAL — EXPORTED FILES REQUIRE ACTIVE SESSION:
+    Exported files are streamed directly from the container. They remain
+    available ONLY while the session is active. If you call stop_session on a
+    session that has exported files, those files become UNREACHABLE — the user
+    cannot download them and cross-session import will fail. Therefore: when you
+    export files for the user (or for cross-session transfer where the target
+    session may still need them), do NOT call stop_session on that session.
     <param name="session_id">ID returned by create_session.</param>
     <param name="files">
       List of objects with "source" (path in container).
@@ -593,6 +603,11 @@ PHASE 5 — LAST RESORT ONLY:
 
   <tool name="stop_session">
     Stops and removes the sandbox when it is no longer needed.
+
+    DO NOT call stop_session on a session that has exported files the user
+    may need to download. Exported files are streamed from the container and
+    become unreachable once the session is stopped. Keep the session active
+    so the user can access the download URLs.
   </tool>
 </tools>
 
@@ -625,7 +640,10 @@ PHASE 5 — LAST RESORT ONLY:
   7. PRESENT — show the solution with justification. If alternatives exist,
      present them with trade-offs. ONLY present when ALL parts of the task
      have been addressed — see <complete_all_parts>.
-  8. stop_session — when done.
+  8. stop_session — when done. EXCEPTION: do NOT call stop_session on any
+     session that has exported files the user may need to download. Exported
+     files are only available while the session is active; stopping the
+     session makes them unreachable.
 </workflow>
 
 <error_handling>
@@ -820,7 +838,9 @@ PHASE 5 — LAST RESORT ONLY:
     export proactively — printing results inline is usually sufficient.
   - For cross-session file transfers: export_files from session A, then
     import_files into session B with {"session_id": A, "path": "..."}.
-  - Always end the session with stop_session when finished.
+  - Call stop_session when finished — EXCEPT: do NOT stop any session that has
+    exported files the user may need. Exported files are only available while
+    the session is active; stopping makes them unreachable.
   - ALWAYS present your solution with justification and alternatives considered
     (see <solution_presentation>).
   - When asking questions, be efficient: group related questions, provide
