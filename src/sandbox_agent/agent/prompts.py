@@ -452,7 +452,8 @@ PHASE 5 — LAST RESORT ONLY:
     <param name="dependencies">
       Dictionary of packages to install BEFORE running any code.
       Keys are package names, values are version strings ("" for latest).
-      Example: {"pandas": "", "matplotlib": "3.9.0"}
+      Always use strings for versions, never numbers — e.g. "2.2" not 2.2.
+      Example: {"pandas": "", "numpy": "1.26", "matplotlib": "3.9.0"}
     </param>
     <returns>A session_id that identifies the sandbox.</returns>
     <important>

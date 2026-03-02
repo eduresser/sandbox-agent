@@ -82,7 +82,7 @@ def _set_thread() -> None:
 @mcp.tool()
 def create_session(
     language: str = "python",
-    dependencies: dict[str, str] | None = None,
+    dependencies: dict[str, str] = {},
 ) -> dict[str, Any]:
     """Creates an isolated sandbox environment (Docker container).
 
@@ -92,8 +92,9 @@ def create_session(
     Args:
         language: Sandbox language/runtime. Use "python", "node", "r", or "julia".
         dependencies: Packages to pre-install. Keys are package names,
-            values are versions (use "" for latest).
-            Example: {"pandas": "", "numpy": "", "matplotlib": "3.9.0"}.
+            values are version strings (use "" for latest). Always use strings,
+            never numbers — e.g. "2.2" not 2.2. Null/None is treated as "".
+            Example: {"pandas": "", "numpy": "1.26", "matplotlib": "3.9.0"}.
 
     Returns:
         JSON with session_id and session info.

@@ -43,14 +43,18 @@ def _enrich_export_result(result_dict: dict, *, thread_id: str | None) -> None:
 def create_session(
     manager: SandboxManager,
     language: str = "python",
-    dependencies: dict[str, str] | None = None,
+    dependencies: dict[str, str] = {},
     *,
     filter_by_thread: bool = True,
 ) -> dict[str, Any]:
     try:
+        dependencies = {
+            k: "" if v is None else str(v)
+            for k, v in dependencies.items()
+        }
         info = manager.create_session(
             runtime=language or "python",
-            dependencies=dict(dependencies or {}),
+            dependencies=dependencies,
         )
     except Exception as exc:
         return error_payload(manager, exc, filter_by_thread=filter_by_thread)
