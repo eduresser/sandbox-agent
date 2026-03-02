@@ -13,8 +13,8 @@ from sandbox_agent.tools._core import export_files as core_export_files
 def create_export_files_tool(manager: SandboxManager) -> BaseTool:
     @tool
     def export_files(
-        session_id: str,
-        files: list[dict[str, str]],
+        session_id: str = "",
+        files: list[dict[str, str]] = [],
     ) -> str:
         """Registers files for download and cross-session import (no host copy).
 

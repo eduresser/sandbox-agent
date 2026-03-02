@@ -3,6 +3,10 @@
 Each function takes a ``SandboxManager`` plus tool arguments and returns a
 plain ``dict``.  LangChain wrappers serialise the result to JSON; MCP
 wrappers return it directly.
+
+All inputs are validated via Pydantic models (see ``_schemas.py``).  When
+validation fails the function returns a structured error dict instead of
+raising, so the LLM can self-correct.
 """
 
 from __future__ import annotations
@@ -11,9 +15,19 @@ from dataclasses import asdict
 from typing import Any
 from urllib.parse import quote
 
+from pydantic import ValidationError
+
 from sandbox_agent.sandbox.manager import SandboxManager, current_thread_id
 from sandbox_agent.settings import get_settings
-from sandbox_agent.tools._helpers import error_payload
+from sandbox_agent.tools._helpers import error_payload, validation_error_payload
+from sandbox_agent.tools._schemas import (
+    CreateSessionInput,
+    ExecuteCodeInput,
+    ExecuteTerminalInput,
+    ExportFilesInput,
+    ImportFilesInput,
+    StopSessionInput,
+)
 
 # ── Helpers ────────────────────────────────────────────────────────────────
 
@@ -48,13 +62,14 @@ def create_session(
     filter_by_thread: bool = True,
 ) -> dict[str, Any]:
     try:
-        dependencies = {
-            k: "" if v is None else str(v)
-            for k, v in dependencies.items()
-        }
+        params = CreateSessionInput(language=language, dependencies=dependencies)
+    except ValidationError as exc:
+        return validation_error_payload(exc)
+
+    try:
         info = manager.create_session(
-            runtime=language or "python",
-            dependencies=dependencies,
+            runtime=params.language,
+            dependencies=params.dependencies,
         )
     except Exception as exc:
         return error_payload(manager, exc, filter_by_thread=filter_by_thread)
@@ -80,7 +95,14 @@ def execute_code(
     filter_by_thread: bool = True,
 ) -> dict[str, Any]:
     try:
-        result = manager.execute_code(session_id, code, timeout=timeout or 30)
+        params = ExecuteCodeInput(session_id=session_id, code=code, timeout=timeout)
+    except ValidationError as exc:
+        return validation_error_payload(exc)
+
+    try:
+        result = manager.execute_code(
+            params.session_id, params.code, timeout=params.timeout or 30
+        )
     except Exception as exc:
         return error_payload(manager, exc, filter_by_thread=filter_by_thread)
 
@@ -102,7 +124,12 @@ def execute_terminal(
     filter_by_thread: bool = True,
 ) -> dict[str, Any]:
     try:
-        result = manager.execute_terminal(session_id, command)
+        params = ExecuteTerminalInput(session_id=session_id, command=command)
+    except ValidationError as exc:
+        return validation_error_payload(exc)
+
+    try:
+        result = manager.execute_terminal(params.session_id, params.command)
     except Exception as exc:
         return error_payload(manager, exc, filter_by_thread=filter_by_thread)
 
@@ -121,7 +148,14 @@ def import_files(
     filter_by_thread: bool = True,
 ) -> dict[str, Any]:
     try:
-        result = manager.import_files(session_id, list(files))
+        params = ImportFilesInput(session_id=session_id, files=files)
+    except ValidationError as exc:
+        return validation_error_payload(exc)
+
+    try:
+        result = manager.import_files(
+            params.session_id, [f.model_dump(exclude_none=True) for f in params.files]
+        )
     except Exception as exc:
         return error_payload(manager, exc, filter_by_thread=filter_by_thread)
 
@@ -144,11 +178,18 @@ def export_files(
     When *thread_id* is not provided explicitly, falls back to
     ``current_thread_id`` context var (set by the agent graph or MCP server).
     """
+    try:
+        params = ExportFilesInput(session_id=session_id, files=files)
+    except ValidationError as exc:
+        return validation_error_payload(exc)
+
     if thread_id is None:
         thread_id = current_thread_id.get(None)
 
     try:
-        result = manager.export_files(session_id, list(files))
+        result = manager.export_files(
+            params.session_id, [f.model_dump(exclude_none=True) for f in params.files]
+        )
     except Exception as exc:
         return error_payload(manager, exc, filter_by_thread=filter_by_thread)
 
@@ -164,7 +205,12 @@ def stop_session(
     filter_by_thread: bool = True,
 ) -> dict[str, Any]:
     try:
-        success = manager.stop_session(session_id)
+        params = StopSessionInput(session_id=session_id)
+    except ValidationError as exc:
+        return validation_error_payload(exc)
+
+    try:
+        success = manager.stop_session(params.session_id)
     except Exception as exc:
         return error_payload(manager, exc, filter_by_thread=filter_by_thread)
 

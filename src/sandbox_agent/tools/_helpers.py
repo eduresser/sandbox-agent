@@ -1,7 +1,8 @@
 """Shared helpers for tool error responses.
 
 Provides a single ``error_payload`` that returns a ``dict`` (used by MCP and
-LangChain tools alike) and a thin ``error_response`` wrapper that serialises
+LangChain tools alike), ``validation_error_payload`` for Pydantic input
+validation failures, and a thin ``error_response`` wrapper that serialises
 the payload to a JSON string for LangChain tools.
 """
 
@@ -10,6 +11,8 @@ from __future__ import annotations
 import json
 import traceback
 from typing import Any
+
+from pydantic import ValidationError
 
 from sandbox_agent.sandbox.manager import ContainerDiedError, SandboxManager, current_thread_id
 from sandbox_agent.sandbox.models import truncate_field
@@ -78,6 +81,19 @@ def error_payload(
         payload["traceback"] = truncate_field(raw_tb, settings.MAX_TRACEBACK_CHARS)
 
     return payload
+
+
+def validation_error_payload(exc: ValidationError) -> dict[str, Any]:
+    """Build a structured error payload from a Pydantic ``ValidationError``.
+
+    Returns a ``dict`` with the same ``success`` / ``error`` / ``hint``
+    structure used by ``error_payload`` so the LLM can self-correct.
+    """
+    return {
+        "success": False,
+        "error": "INVALID_INPUT",
+        "details": exc.errors(include_url=False)
+    }
 
 
 def error_response(manager: SandboxManager, exc: Exception) -> str:

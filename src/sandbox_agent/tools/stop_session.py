@@ -12,7 +12,7 @@ from sandbox_agent.tools._core import stop_session as core_stop_session
 
 def create_stop_session_tool(manager: SandboxManager) -> BaseTool:
     @tool
-    def stop_session(session_id: str) -> str:
+    def stop_session(session_id: str = "") -> str:
         """Stops and removes the sandbox completely.
         Use when done with a session.
 

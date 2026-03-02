@@ -12,7 +12,7 @@ from sandbox_agent.tools._core import execute_code as core_execute_code
 
 def create_execute_code_tool(manager: SandboxManager) -> BaseTool:
     @tool
-    def execute_code(session_id: str, code: str, timeout: int | None = None) -> str:
+    def execute_code(session_id: str = "", code: str = "", timeout: int | None = None) -> str:
         """Executes code in the sandbox. State persists across calls
         (like Jupyter Notebook cells).
 

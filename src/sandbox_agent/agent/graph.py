@@ -129,7 +129,23 @@ def build_agent(
             result_messages: list[ToolMessage] = []
             for tc in last_msg.tool_calls:
                 tool_fn = tools_by_name[tc["name"]]
-                raw_result = tool_fn.invoke(tc["args"])
+
+                try:
+                    raw_result = tool_fn.invoke(tc["args"])
+                except Exception as exc:
+                    payload = {
+                        "success": False,
+                        "error": f"{type(exc).__name__}: {exc}",
+                        "hint": "Fix the invalid parameters and try again.",
+                    }
+                    result_messages.append(
+                        ToolMessage(
+                            content=json.dumps(payload, ensure_ascii=False),
+                            tool_call_id=tc["id"],
+                            name=tc["name"],
+                        )
+                    )
+                    continue
 
                 if tc["name"] == "execute_code":
                     content = _process_execute_code_content(

@@ -12,7 +12,7 @@ from sandbox_agent.tools._core import execute_terminal as core_execute_terminal
 
 def create_execute_terminal_tool(manager: SandboxManager) -> BaseTool:
     @tool
-    def execute_terminal(session_id: str, command: str) -> str:
+    def execute_terminal(session_id: str = "", command: str = "") -> str:
         """Runs a shell command inside the sandbox.
         Useful for listing files, installing Linux dependencies, etc.
 

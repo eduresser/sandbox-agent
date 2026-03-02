@@ -13,8 +13,8 @@ from sandbox_agent.tools._core import import_files as core_import_files
 def create_import_files_tool(manager: SandboxManager) -> BaseTool:
     @tool
     def import_files(
-        session_id: str,
-        files: list[dict[str, str]],
+        session_id: str = "",
+        files: list[dict[str, str]] = [],
     ) -> str:
         """Copies files into the sandbox from the host or from another session.
 
