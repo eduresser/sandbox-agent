@@ -13,6 +13,7 @@ thread persistence, and all other features work identically everywhere.
 
 from __future__ import annotations
 
+import atexit
 import json
 import logging
 import os
@@ -23,6 +24,8 @@ import time
 import urllib.request
 from pathlib import Path
 from typing import Any
+
+_API_PROCESS: subprocess.Popen | None = None
 
 from rich.console import Console
 from rich.markdown import Markdown
@@ -256,15 +259,47 @@ def _run_api(dev: bool = False) -> None:
     sys.exit(0)
 
 
+def _kill_api_if_started_by_ui() -> None:
+    """Kill the API process if we started it for the UI."""
+    global _API_PROCESS
+    if _API_PROCESS is not None and _API_PROCESS.poll() is None:
+        _API_PROCESS.terminate()
+        try:
+            _API_PROCESS.wait(timeout=5)
+        except subprocess.TimeoutExpired:
+            _API_PROCESS.kill()
+        _API_PROCESS = None
+
+
 def _run_ui() -> None:
-    """Run the React frontend. Requires API to be running."""
-    api_url = "http://127.0.0.1:8000"
+    """Run the React frontend. Auto-starts API in background if not running."""
+    global _API_PROCESS
+    api_url = get_settings().API_BASE_URL
+
     if not _api_is_healthy(api_url):
-        _console.print(
-            "[red]API is not running.[/red]\n"
-            "Start manually with: [cyan]uv run sandbox-agent api[/cyan]"
+        _console.print("[dim]API not running. Starting in background...[/dim]")
+        if not _ensure_postgres_running(_console):
+            sys.exit(1)
+        _API_PROCESS = subprocess.Popen(
+            ["aegra", "serve", "--host", "0.0.0.0", "--port", "8000"],
+            cwd=Path.cwd(),
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+            start_new_session=True,
         )
-        sys.exit(1)
+        atexit.register(_kill_api_if_started_by_ui)
+        for i in range(30):
+            if _api_is_healthy(api_url):
+                _console.print("[green]API ready.[/green]")
+                break
+            time.sleep(1)
+        else:
+            _kill_api_if_started_by_ui()
+            _console.print(
+                "[red]API did not become ready in time.[/red]\n"
+                "Start manually with: [cyan]uv run sandbox-agent api[/cyan]"
+            )
+            sys.exit(1)
 
     root = Path(__file__).resolve().parent.parent.parent
     frontend_dir = root / "frontend"
@@ -287,12 +322,15 @@ def _run_ui() -> None:
 
     _console.print(
         "[green]Starting frontend at http://localhost:5173[/green]\n"
-        "API proxy: /api -> http://127.0.0.1:8000"
+        f"API: [cyan]{api_url}[/cyan]"
     )
-    subprocess.run(
-        ["npm", "run", "dev"],
-        cwd=frontend_dir,
-    )
+    try:
+        subprocess.run(
+            ["npm", "run", "dev"],
+            cwd=frontend_dir,
+        )
+    finally:
+        _kill_api_if_started_by_ui()
 
 
 def run_frontend_entry() -> None:

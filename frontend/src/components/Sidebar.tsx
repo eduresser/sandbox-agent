@@ -63,11 +63,6 @@ export function Sidebar({
     }
   }, [threads, previews, loadPreview]);
 
-  const visibleThreads = threads.filter((t) => {
-    const p = previews.get(t.thread_id);
-    return p !== null && p !== undefined;
-  });
-
   return (
     <aside className="flex h-full w-64 shrink-0 flex-col border-r border-zinc-800 bg-zinc-900">
       <div className="flex items-center justify-between p-4">
@@ -81,11 +76,11 @@ export function Sidebar({
         </button>
       </div>
 
-      <div className="flex-1 overflow-y-auto px-2">
-        {visibleThreads.length === 0 && (
+      <div className="flex-1 overflow-y-auto px-2 flex flex-col gap-0.5">
+        {threads.length === 0 && (
           <p className="px-3 py-4 text-xs text-zinc-500">No conversations yet.</p>
         )}
-        {visibleThreads.map((thread) => {
+        {threads.map((thread) => {
           const elapsed = thread.updated_at ? timeAgo(thread.updated_at) : "";
           const preview = previews.get(thread.thread_id) ?? "";
 
@@ -93,7 +88,7 @@ export function Sidebar({
             <div
               key={thread.thread_id}
               className={cn(
-                "group flex items-center gap-2 rounded-lg px-3 py-2 text-sm cursor-pointer transition-colors",
+                "group flex items-center gap-2 rounded-lg px-3 py-1.5 text-sm cursor-pointer transition-colors",
                 thread.thread_id === activeThreadId
                   ? "bg-zinc-800 text-zinc-100"
                   : "text-zinc-400 hover:bg-zinc-800/50 hover:text-zinc-200",
@@ -102,11 +97,11 @@ export function Sidebar({
             >
               <MessageSquare size={14} className="shrink-0" />
               <div className="flex-1 min-w-0">
-                <span className="block truncate">
+                <span className="block truncate leading-tight">
                   {preview || "New conversation"}
                 </span>
                 {elapsed && (
-                  <span className="block text-[10px] text-zinc-500">{elapsed}</span>
+                  <span className="block text-[10px] text-zinc-500 leading-tight">{elapsed}</span>
                 )}
               </div>
               <button
