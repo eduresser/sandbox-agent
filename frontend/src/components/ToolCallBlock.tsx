@@ -22,6 +22,7 @@ import {
   formatFileSize,
 } from "../lib/utils";
 import { getDownloadUrl } from "../api/aegra";
+import { ClickableImage } from "./ImageLightbox";
 
 interface ToolCallBlockProps {
   toolCall: ToolCall;
@@ -227,7 +228,7 @@ export function ToolCallBlock({
       {figures.length > 0 && (
         <div className="mt-2 space-y-2">
           {figures.map((b64, i) => (
-            <img
+            <ClickableImage
               key={i}
               src={b64.startsWith("data:") ? b64 : `data:image/png;base64,${b64}`}
               alt="Figure"

@@ -5,6 +5,7 @@ import { oneDark } from "react-syntax-highlighter/dist/esm/styles/prism";
 import type { Message } from "../types";
 import { ToolCallBlock } from "./ToolCallBlock";
 import { ThinkingBlock } from "./ThinkingBlock";
+import { ClickableImage } from "./ImageLightbox";
 import { extractTextContent, extractThinking, getToolOutputText } from "../lib/utils";
 
 /** True if there is any non-Tool message after this one (next AI with tool_calls, final AI content, or Human). */
@@ -187,6 +188,16 @@ export function MessageBubble({
                       <pre className="my-2 overflow-x-auto rounded-lg bg-zinc-900 p-3 text-[0.8125rem]">
                         {children}
                       </pre>
+                    );
+                  },
+                  img({ src, alt }) {
+                    if (!src) return null;
+                    return (
+                      <ClickableImage
+                        src={src}
+                        alt={alt}
+                        className="my-2 max-w-full rounded-lg border border-zinc-800"
+                      />
                     );
                   },
                 }}

@@ -174,3 +174,35 @@
   padding: 0;
   font-size: inherit;
 }
+
+/* Image lightbox overlay */
+.image-lightbox-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 9999;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background-color: rgba(0, 0, 0, 0.85);
+  backdrop-filter: blur(8px);
+  cursor: zoom-out;
+  animation: lightbox-fade-in 0.15s ease-out;
+}
+
+.image-lightbox-img {
+  max-width: 92vw;
+  max-height: 92vh;
+  object-fit: contain;
+  border-radius: 0.5rem;
+  box-shadow: 0 25px 50px -12px rgba(0, 0, 0, 0.5);
+  cursor: default;
+}
+
+@keyframes lightbox-fade-in {
+  from {
+    opacity: 0;
+  }
+  to {
+    opacity: 1;
+  }
+}
