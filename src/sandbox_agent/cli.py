@@ -4,10 +4,10 @@ Unified entry point with subcommands:
   sandbox-agent cli      — interactive CLI (API client with Rich rendering)
   sandbox-agent mcp      — MCP server
   sandbox-agent api      — REST API (Aegra)
-  sandbox-agent ui       — Streamlit UI (requires API running)
+  sandbox-agent ui       — React UI (requires API running)
 
 The CLI operates as a thin client on top of the Aegra API — the same
-API that the Streamlit frontend uses.  This ensures that export URLs,
+API that the React frontend uses.  This ensures that export URLs,
 thread persistence, and all other features work identically everywhere.
 """
 
@@ -257,7 +257,7 @@ def _run_api(dev: bool = False) -> None:
 
 
 def _run_ui() -> None:
-    """Run the Streamlit frontend. Requires API to be running."""
+    """Run the React frontend. Requires API to be running."""
     api_url = "http://127.0.0.1:8000"
     if not _api_is_healthy(api_url):
         _console.print(
@@ -267,21 +267,32 @@ def _run_ui() -> None:
         sys.exit(1)
 
     root = Path(__file__).resolve().parent.parent.parent
-    app_path = root / "frontend" / "app.py"
-    if not app_path.exists():
-        print(f"Error: frontend app not found at {app_path}", file=sys.stderr)
-        sys.exit(1)
-    sys.argv = ["streamlit", "run", str(app_path), "--server.port=8501"]
-    try:
-        import streamlit.web.cli as stcli
-    except ImportError:
+    frontend_dir = root / "frontend"
+    package_json = frontend_dir / "package.json"
+    if not package_json.exists():
         _console.print(
-            "[red]Frontend dependencies not installed.[/red]\n"
-            "Execute: [cyan]uv sync --extra frontend[/cyan]"
+            "[red]Frontend not found.[/red]\n"
+            f"Expected: {frontend_dir}"
         )
         sys.exit(1)
 
-    stcli.main()
+    node_modules = frontend_dir / "node_modules"
+    if not node_modules.exists():
+        _console.print("[yellow]Installing frontend dependencies...[/yellow]")
+        subprocess.run(
+            ["npm", "install"],
+            cwd=frontend_dir,
+            check=True,
+        )
+
+    _console.print(
+        "[green]Starting frontend at http://localhost:5173[/green]\n"
+        "API proxy: /api -> http://127.0.0.1:8000"
+    )
+    subprocess.run(
+        ["npm", "run", "dev"],
+        cwd=frontend_dir,
+    )
 
 
 def run_frontend_entry() -> None:
@@ -299,7 +310,7 @@ def _print_help() -> None:
         "  mcp         — MCP server (Cursor, Claude Desktop)\n"
         "  api         — REST API (Aegra, sem reload)\n"
         "  api dev     — REST API com hot reload\n"
-        "  ui          — Streamlit UI (requires API running)\n"
+        "  ui          — React UI (requires API running)\n"
     )
 
 

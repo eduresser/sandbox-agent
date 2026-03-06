@@ -1,15 +1,16 @@
-"""Custom FastAPI app for Aegra — file downloads and thread cleanup."""
+"""Custom FastAPI app for Aegra — file downloads, uploads, and thread cleanup."""
 
 from __future__ import annotations
 
 import logging
 import re
+from pathlib import Path
 from urllib.parse import unquote
 
-from fastapi import FastAPI, Query
+from fastapi import FastAPI, Query, UploadFile
 from starlette.middleware.base import BaseHTTPMiddleware
 from starlette.requests import Request
-from starlette.responses import Response, StreamingResponse
+from starlette.responses import JSONResponse, Response, StreamingResponse
 
 logger = logging.getLogger(__name__)
 
@@ -109,3 +110,35 @@ async def download_thread_file(
         )
     except (ValueError, RuntimeError) as exc:
         return Response(status_code=403, content=str(exc))
+
+
+def _get_storage_dir() -> Path:
+    from sandbox_agent.settings import get_settings
+
+    settings = get_settings()
+    sd = Path(settings.STORAGE_DIR)
+    if not sd.is_absolute():
+        sd = Path(__file__).resolve().parent.parent.parent / sd
+    return sd
+
+
+@app.post("/threads/{thread_id}/files/upload")
+async def upload_thread_files(thread_id: str, files: list[UploadFile]):
+    """Upload files to be available for import into sandbox sessions."""
+    dest_dir = _get_storage_dir() / thread_id / "uploads"
+    dest_dir.mkdir(parents=True, exist_ok=True)
+
+    results = []
+    for f in files:
+        if not f.filename:
+            continue
+        file_path = dest_dir / f.filename
+        content = await f.read()
+        file_path.write_bytes(content)
+        results.append({
+            "name": f.filename,
+            "path": str(file_path.resolve()),
+            "size": len(content),
+        })
+
+    return JSONResponse(results)
