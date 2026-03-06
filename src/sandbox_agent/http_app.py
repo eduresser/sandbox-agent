@@ -2,12 +2,14 @@
 
 from __future__ import annotations
 
+import json
 import logging
 import re
 from pathlib import Path
 from urllib.parse import unquote
 
 from fastapi import FastAPI, Query, UploadFile
+from pydantic import BaseModel
 from starlette.middleware.base import BaseHTTPMiddleware
 from starlette.requests import Request
 from starlette.responses import JSONResponse, Response, StreamingResponse
@@ -120,6 +122,65 @@ def _get_storage_dir() -> Path:
     if not sd.is_absolute():
         sd = Path(__file__).resolve().parent.parent.parent / sd
     return sd
+
+
+# ── Frontend settings persistence ──────────────────────────────────────────
+
+
+class FrontendSettings(BaseModel):
+    chatModel: str | None = None
+    chatModelProvider: str | None = None
+    chatModelApiKey: str | None = None
+    chatModelBaseUrl: str | None = None
+    supportsVision: bool | None = None
+
+
+def _settings_file() -> Path:
+    return _get_storage_dir() / "frontend_settings.json"
+
+
+def _load_frontend_settings() -> dict:
+    path = _settings_file()
+    if path.exists():
+        try:
+            return json.loads(path.read_text("utf-8"))
+        except (json.JSONDecodeError, OSError):
+            logger.warning("Failed to read frontend settings file", exc_info=True)
+    return {}
+
+
+def _backend_defaults() -> dict:
+    from sandbox_agent.settings import get_settings
+
+    s = get_settings()
+    return {
+        "chatModel": s.CHAT_MODEL,
+        "chatModelProvider": s.CHAT_MODEL_PROVIDER,
+        "chatModelApiKey": s.CHAT_MODEL_API_KEY,
+        "chatModelBaseUrl": s.CHAT_MODEL_BASE_URL or "",
+        "supportsVision": s.CHAT_MODEL_SUPPORTS_VISION
+        if s.CHAT_MODEL_SUPPORTS_VISION is not None
+        else True,
+    }
+
+
+@app.get("/settings")
+async def get_frontend_settings():
+    """Return persisted frontend settings merged over backend defaults."""
+    defaults = _backend_defaults()
+    saved = _load_frontend_settings()
+    return JSONResponse({**defaults, **saved})
+
+
+@app.put("/settings")
+async def save_frontend_settings(body: FrontendSettings):
+    """Persist frontend settings to disk."""
+    data = body.model_dump(exclude_none=True)
+    path = _settings_file()
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(json.dumps(data, indent=2), "utf-8")
+    defaults = _backend_defaults()
+    return JSONResponse({**defaults, **data})
 
 
 @app.post("/threads/{thread_id}/files/upload")

@@ -24,6 +24,19 @@ export async function checkHealth(): Promise<boolean> {
   }
 }
 
+export async function getSettings(): Promise<Record<string, unknown>> {
+  return request<Record<string, unknown>>("/settings");
+}
+
+export async function saveSettings(
+  settings: Record<string, unknown>,
+): Promise<Record<string, unknown>> {
+  return request<Record<string, unknown>>("/settings", {
+    method: "PUT",
+    body: JSON.stringify(settings),
+  });
+}
+
 export async function createThread(
   metadata?: Record<string, unknown>,
 ): Promise<Thread> {

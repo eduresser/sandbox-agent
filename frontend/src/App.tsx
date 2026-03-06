@@ -4,24 +4,21 @@ import { ChatArea } from "./components/ChatArea";
 import { Settings } from "./components/Settings";
 import { useThreads } from "./hooks/useThreads";
 import { useChat } from "./hooks/useChat";
+import { getSettings, saveSettings as apiSaveSettings } from "./api/aegra";
 import type { Settings as SettingsType } from "./types";
 import { DEFAULT_SETTINGS } from "./types";
 
-const STORAGE_KEY = "sandbox-agent-settings";
-
-function loadSettings(): SettingsType {
-  try {
-    const raw = localStorage.getItem(STORAGE_KEY);
-    if (raw) return { ...DEFAULT_SETTINGS, ...JSON.parse(raw) };
-  } catch {
-    // ignore
-  }
-  return { ...DEFAULT_SETTINGS };
-}
-
 export default function App() {
-  const [settings, setSettings] = useState<SettingsType>(loadSettings);
+  const [settings, setSettings] = useState<SettingsType>(DEFAULT_SETTINGS);
   const [showSettings, setShowSettings] = useState(false);
+
+  useEffect(() => {
+    getSettings()
+      .then((remote) => {
+        setSettings((prev) => ({ ...prev, ...remote } as SettingsType));
+      })
+      .catch(() => {});
+  }, []);
 
   const {
     threads,
@@ -43,7 +40,7 @@ export default function App() {
 
   const handleSaveSettings = useCallback((s: SettingsType) => {
     setSettings(s);
-    localStorage.setItem(STORAGE_KEY, JSON.stringify(s));
+    apiSaveSettings(s).catch(() => {});
   }, []);
 
   const handleNewThread = useCallback(async () => {
