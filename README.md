@@ -1,6 +1,6 @@
 # Sandbox Agent
 
-LangGraph agent with Docker-based sandboxed code execution. Each session runs in an isolated, hardened Docker container with a persistent kernel — IPython for Python, `vm.createContext` for Node.js, a dedicated R environment, and a Julia REPL. Supports 4 runtimes, provider-agnostic LLM configuration, and vision (auto-detection of multimodal models). Available as an interactive CLI, MCP server (Cursor, Claude Desktop), REST API ([Aegra](https://aegra.dev/)), and Streamlit frontend.
+LangGraph agent with Docker-based sandboxed code execution. Each session runs in an isolated, hardened Docker container with a persistent kernel — IPython for Python, `vm.createContext` for Node.js, a dedicated R environment, and a Julia REPL. Supports 4 runtimes, provider-agnostic LLM configuration, and vision (auto-detection of multimodal models). Available as an interactive CLI, MCP server (Cursor, Claude Desktop), REST API ([Aegra](https://aegra.dev/)), and React frontend.
 
 ## Features
 
@@ -17,7 +17,9 @@ LangGraph agent with Docker-based sandboxed code execution. Each session runs in
 - **6 tools** — `create_session`, `execute_code`, `execute_terminal`, `import_files`, `export_files`, `stop_session`
 - **MCP server** — expose the same tools via Model Context Protocol (stdio transport)
 - **REST API** — full LangGraph Platform API via [Aegra](https://aegra.dev/) with OpenAPI docs, streaming, thread management
-- **Streamlit frontend** — web UI with chat, tool visualization, file upload/download, settings dialog
+- **Input validation** — Pydantic schemas validate all tool inputs before execution, returning structured errors on failure
+- **React frontend** — SPA with chat, tool visualization, file upload/download, settings dialog (React 19 + Vite + Tailwind CSS)
+- **File upload** — upload files to the API for import into sandbox sessions (`POST /threads/{id}/files/upload`)
 - **File export** — register files for download (no host copy); download via API or use in cross-session import
 - **File import** — import from host paths, inline content, or from another session (files exported in same conversation)
 - **Cross-session transfer** — export from session A, import into session B with `{session_id, path}`
@@ -30,6 +32,7 @@ LangGraph agent with Docker-based sandboxed code execution. Each session runs in
 - Docker Engine
 - API key for your LLM provider (`CHAT_MODEL_API_KEY`)
 - PostgreSQL (for API/CLI mode — checkpointer + Aegra)
+- Node.js 18+ and npm (for the React frontend)
 
 ## Setup
 
@@ -37,8 +40,11 @@ LangGraph agent with Docker-based sandboxed code execution. Each session runs in
 # Docker — installs (if needed), configures permissions, and builds all 4 images
 sudo ./setup-docker.sh
 
-# Install dependencies (open a new terminal so the docker group is active)
+# Install Python dependencies (open a new terminal so the docker group is active)
 uv sync
+
+# Install frontend dependencies
+cd frontend && npm install && cd ..
 
 # Configure environment
 cp .env.example .env
@@ -49,12 +55,11 @@ cp .env.example .env
 
 ### PostgreSQL (required for CLI, API, and UI)
 
-The quickest way is via the included `docker-compose.yml`:
+PostgreSQL is auto-started via Docker Compose when using `localhost`. The CLI detects if PostgreSQL is reachable and starts it automatically:
 
 ```bash
-# Start PostgreSQL only (for development)
-aegra dev
-# This starts PostgreSQL (pgvector:pg18) and the API server
+# Manual start (if needed)
+docker compose up postgres -d
 ```
 
 Or point to an existing PostgreSQL instance via `POSTGRES_*` env vars in `.env`.
@@ -66,9 +71,9 @@ All commands use the unified `sandbox-agent` entry point:
 ```bash
 uv run sandbox-agent cli       # Interactive CLI (default)
 uv run sandbox-agent mcp       # MCP server (Cursor, Claude Desktop)
-uv run sandbox-agent api       # REST API (Aegra, sem reload)
-uv run sandbox-agent api dev   # REST API com hot reload
-uv run sandbox-agent ui        # Streamlit UI (requires API running)
+uv run sandbox-agent api       # REST API (Aegra, no reload)
+uv run sandbox-agent api dev   # REST API with hot reload
+uv run sandbox-agent ui        # React UI (auto-starts API if needed)
 ```
 
 ### CLI
@@ -119,38 +124,38 @@ The `import_files` tool accepts file content directly (as text or base64 via `fi
 Run the agent as a REST API via [Aegra](https://aegra.dev/) (self-hosted LangGraph Platform alternative):
 
 ```bash
-uv run sandbox-agent api       # Production mode (no reload)
-uv run sandbox-agent api dev   # Development mode (hot reload)
+uv run sandbox-agent api       # Production mode (no reload, auto-starts PostgreSQL)
+uv run sandbox-agent api dev   # Development mode (hot reload via aegra dev)
 ```
 
-The server runs at `http://localhost:8000` with OpenAPI docs at `/docs`. Use the LangGraph SDK or curl to create assistants, threads, and stream runs. Compatible with Agent Chat UI, LangGraph Studio, and CopilotKit.
+The production command auto-starts PostgreSQL via Docker Compose if it's not reachable on localhost. The server runs at `http://localhost:8000` with OpenAPI docs at `/docs`. Use the LangGraph SDK or curl to create assistants, threads, and stream runs. Compatible with Agent Chat UI, LangGraph Studio, and CopilotKit.
 
 Custom endpoints:
 
 - `GET /threads/{thread_id}/files/download?session_id=...&path=...` — streams exported files from containers
+- `POST /threads/{thread_id}/files/upload` — uploads files to be available for import into sandbox sessions
 - `DELETE /threads/{thread_id}` — also cleans up Docker sessions and storage for that thread (via middleware)
 
-### Streamlit Frontend
+### React Frontend
 
-A web UI for chatting with the agent via the Aegra API:
+A web UI for chatting with the agent via the Aegra API (React 19 + Vite + Tailwind CSS):
 
 ```bash
-# Install frontend dependencies
-uv sync --extra frontend
+# Install frontend dependencies (if not done during setup)
+cd frontend && npm install && cd ..
 
-# Start the API first (in another terminal), then the UI
-uv run sandbox-agent api
+# Start the UI (auto-starts API + PostgreSQL if needed)
 uv run sandbox-agent ui
 ```
 
-The frontend runs at `http://localhost:8501`. Features:
+The frontend runs at `http://localhost:5173` (Vite dev server with API proxy to `:8000`). Features:
 
-- Thread management (create, resume, delete conversations)
+- Thread management (create, resume, delete conversations) via sidebar
 - Streaming responses with expandable tool blocks (syntax-highlighted per runtime)
 - File upload and download support
-- Session status indicators
+- Thinking block visualization
 - Settings dialog (model, provider, API key, base URL, vision toggle)
-- Persistent config via OS keychain (API key) and XDG-compliant JSON file
+- Persistent config via `localStorage`
 
 ### Programmatic
 
@@ -374,7 +379,7 @@ R and Julia containers use a compiled C client binary for IPC, while Python and 
 flowchart TB
     CLI["CLI · Rich REPL"]
     MCP["MCP Server · FastMCP (stdio)"]
-    UI["Streamlit · Frontend"]
+    UI["React · Frontend"]
 
     CLI --> API["Aegra REST API
     (LangGraph Platform)"]
@@ -422,71 +427,6 @@ flowchart TB
         Kernel --- State["State
         variables, imports, data"]
     end
-```
-
-## Project Structure
-
-```
-sandbox-agent/
-├── pyproject.toml                    # Package metadata, dependencies, entry points
-├── setup-docker.sh                   # Docker install + image builder script
-├── docker-compose.yml                # PostgreSQL + API production stack
-├── langgraph.json                    # Aegra / LangGraph Platform config
-├── Dockerfile                        # Production API image
-│
-├── src/sandbox_agent/
-│   ├── settings.py                   # Pydantic Settings (all configuration)
-│   ├── cli.py                        # Unified CLI (4 subcommands)
-│   ├── mcp_server.py                 # MCP server (FastMCP, stdio)
-│   ├── http_app.py                   # Custom FastAPI (file download + cleanup middleware)
-│   │
-│   ├── agent/
-│   │   ├── graph.py                  # LangGraph StateGraph (ReAct pattern)
-│   │   ├── state.py                  # AgentState TypedDict
-│   │   └── prompts.py               # System prompt
-│   │
-│   ├── clients/
-│   │   ├── aegra.py                  # AegraClient (httpx SSE streaming)
-│   │   └── infra.py                  # DB pool, checkpointer, chat model factories
-│   │
-│   ├── sandbox/
-│   │   ├── manager.py                # SandboxManager (Docker orchestration, GC, IPC)
-│   │   └── models.py                 # Dataclasses (SessionInfo, ExecutionResult, etc.)
-│   │
-│   ├── tools/
-│   │   ├── _core.py                  # Shared core functions (LangChain + MCP)
-│   │   ├── _helpers.py               # Error payload builders
-│   │   ├── create_session.py         # LangChain @tool wrapper
-│   │   ├── execute_code.py
-│   │   ├── execute_terminal.py
-│   │   ├── import_files.py
-│   │   ├── export_files.py
-│   │   └── stop_session.py
-│   │
-│   └── docker/
-│       ├── Dockerfile.python         # Python 3.12 + IPython
-│       ├── Dockerfile.node           # Node.js 22 + vm.createContext
-│       ├── Dockerfile.r              # R 4 + tidyverse + C client
-│       ├── Dockerfile.julia          # Julia 1.11 + DataFrames + C client
-│       ├── kernel/                   # Persistent kernel scripts (PID 1)
-│       └── client/                   # Ephemeral IPC clients
-│
-├── frontend/
-│   ├── app.py                        # Streamlit chat UI
-│   ├── api_client.py                 # AegraClient re-export
-│   ├── config.py                     # Persistent config (keyring + JSON fallback)
-│   └── utils.py                      # Message parsing, file handling, session tracking
-│
-└── tests/
-    ├── conftest.py                   # Shared fixtures
-    ├── test_manager.py               # Integration: all 4 runtimes
-    ├── test_tools.py                 # LangChain tool workflow
-    ├── test_export_files.py          # Export: manager, tool, MCP layers
-    ├── test_mcp.py                   # All 6 MCP tools
-    ├── test_cli.py                   # CLI unit tests
-    ├── test_http_app.py              # FastAPI middleware + download
-    ├── test_api.py                   # E2E Aegra REST API
-    └── test_langgraph_debug.py       # Agent flow debug/trace
 ```
 
 ## Testing
