@@ -321,7 +321,7 @@ class SandboxManager:
     # ── Thread-based GC (primary) ─────────────────────
 
     def _gc_threads(self) -> None:
-        """Evict threads by TTL and capacity, deleting from DB + killing containers."""
+        """Evict threads by TTL and capacity: stop sessions and remove files, but keep thread in DB for future use."""
         pool = self._get_db_pool()
         if pool is None:
             logger.debug("DB not available for thread GC, skipping")
@@ -366,27 +366,8 @@ class SandboxManager:
                 )
 
         for thread_id, reason in threads_to_evict:
-            logger.info("GC: evicting thread %s (%s)", thread_id[:12], reason)
+            logger.info("GC: evicting thread %s (%s) — cleaning sessions/files, keeping thread", thread_id[:12], reason)
             self.cleanup_thread_sessions(thread_id)
-            self._delete_thread_from_db(thread_id)
-
-    def _delete_thread_from_db(self, thread_id: str) -> None:
-        """Delete a thread and all its checkpoint data from PostgreSQL."""
-        pool = self._get_db_pool()
-        if pool is None:
-            return
-
-        try:
-            with pool.connection() as conn:
-                for table in ("checkpoint_writes", "checkpoint_blobs", "checkpoints"):
-                    conn.execute(
-                        f"DELETE FROM {table} WHERE thread_id = %s",  # noqa: S608
-                        (thread_id,),
-                    )
-                conn.execute("DELETE FROM thread WHERE thread_id = %s", (thread_id,))
-            logger.info("GC: deleted thread %s from DB", thread_id[:12])
-        except Exception:
-            logger.warning("GC: failed to delete thread %s from DB", thread_id[:12], exc_info=True)
 
     # ── Session hard-cap GC (safety net) ──────────────
 
