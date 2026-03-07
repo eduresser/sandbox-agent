@@ -18,11 +18,11 @@ import { oneDark } from "react-syntax-highlighter/dist/esm/styles/prism";
 import type { ToolCall } from "../types";
 import {
   parseToolOutput,
-  extractFigures,
+  extractDisplayOutputs,
   formatFileSize,
 } from "../lib/utils";
 import { getDownloadUrl } from "../api/aegra";
-import { ClickableImage } from "./ImageLightbox";
+import { DisplayOutputList } from "./DisplayOutputRenderer";
 
 interface ToolCallBlockProps {
   toolCall: ToolCall;
@@ -117,16 +117,21 @@ export function ToolCallBlock({
   }
 
   const inputDisplay = getInputDisplay(toolCall, sessionRuntimes);
-  const figures = resultContent ? extractFigures(resultContent) : [];
-  if (parsedOutput?.figures && Array.isArray(parsedOutput.figures)) {
-    for (const fig of parsedOutput.figures) {
-      if (typeof fig === "string" && fig && !figures.includes(fig)) {
-        figures.push(fig);
+
+  const displayOutputs = resultContent ? extractDisplayOutputs(resultContent) : [];
+  if (parsedOutput?.display_outputs && Array.isArray(parsedOutput.display_outputs)) {
+    for (const out of parsedOutput.display_outputs) {
+      if (out && typeof out === "object" && typeof (out as Record<string,unknown>).type === "string") {
+        const o = out as { type: string; data: string };
+        const isDuplicate = displayOutputs.some(
+          (existing) => existing.type === o.type && existing.data === o.data,
+        );
+        if (!isDuplicate) {
+          displayOutputs.push(o);
+        }
       }
     }
   }
-
-  const htmlContent = extractHtmlFromResult(parsedOutput);
 
   return (
     <div className="my-1.5">
@@ -216,45 +221,10 @@ export function ToolCallBlock({
           />
         )}
 
-      {/* Rich HTML output (DataFrames, Plotly, etc.) */}
-      {htmlContent && (
-        <div
-          className="mt-2 overflow-x-auto rounded-lg border border-zinc-800 bg-zinc-900 p-3 text-sm tool-html-output"
-          dangerouslySetInnerHTML={{ __html: htmlContent }}
-        />
-      )}
-
-      {/* Inline figures */}
-      {figures.length > 0 && (
-        <div className="mt-2 space-y-2">
-          {figures.map((b64, i) => (
-            <ClickableImage
-              key={i}
-              src={b64.startsWith("data:") ? b64 : `data:image/png;base64,${b64}`}
-              alt="Figure"
-              className="max-w-full rounded-lg border border-zinc-800"
-            />
-          ))}
-        </div>
-      )}
+      {/* Display outputs (images, HTML, audio, video, etc.) */}
+      <DisplayOutputList outputs={displayOutputs} />
     </div>
   );
-}
-
-function extractHtmlFromResult(
-  parsedOutput: Record<string, unknown> | null,
-): string | null {
-  if (!parsedOutput) return null;
-
-  const result = parsedOutput.result;
-  if (result && typeof result === "object" && !Array.isArray(result)) {
-    const r = result as Record<string, unknown>;
-    if (typeof r["text/html"] === "string" && r["text/html"].trim()) {
-      return r["text/html"];
-    }
-  }
-
-  return null;
 }
 
 function getInputDisplay(
@@ -291,7 +261,7 @@ function OutputDisplay({
 
   if (parsedOutput) {
     const clean = { ...parsedOutput };
-    delete clean.figures;
+    delete clean.display_outputs;
     displayText = JSON.stringify(clean, null, 2);
   } else {
     displayText = rawResult;

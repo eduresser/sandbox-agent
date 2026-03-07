@@ -11,7 +11,7 @@ LangGraph agent with Docker-based sandboxed code execution. Each session runs in
 - **Checkpointer PostgreSQL** — conversation history persists across restarts (shared with Aegra)
 - **Async support** — Promises (Node.js) and coroutines (Python) are automatically awaited
 - **Multi-runtime** — Python, Node.js, R, and Julia
-- **Vision support** — auto-detects multimodal LLMs and sends matplotlib/ggplot figures as base64 PNG images
+- **Rich display outputs** — captures matplotlib/ggplot figures, Plotly charts, IPython Audio, HTML widgets, and more; auto-sends images to multimodal LLMs
 - **Provider-agnostic** — works with OpenAI, Anthropic, Google Gemini, Ollama, or any compatible provider via `langchain init_chat_model`
 - **Runtime package install** — `pip install` / `npm install` / `install.packages()` / `Pkg.add()` at session creation or via terminal
 - **6 tools** — `create_session`, `execute_code`, `execute_terminal`, `import_files`, `export_files`, `stop_session`

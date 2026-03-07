@@ -87,6 +87,17 @@ export function useChat(
           [{ role: "human", content: fullContent }],
           configurable,
         )) {
+          if (event.event === "error") {
+            const errData = event.data;
+            let errMsg = "An unexpected error occurred.";
+            if (typeof errData === "string") {
+              errMsg = errData;
+            } else if (typeof errData === "object" && errData !== null) {
+              const obj = errData as Record<string, unknown>;
+              errMsg = (obj.message ?? obj.error ?? JSON.stringify(obj)) as string;
+            }
+            throw new Error(errMsg);
+          }
           if (
             event.event === "values" &&
             typeof event.data === "object" &&

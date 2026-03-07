@@ -1,6 +1,6 @@
 import { clsx, type ClassValue } from "clsx";
 import { twMerge } from "tailwind-merge";
-import type { ContentBlock, Message } from "../types";
+import type { ContentBlock, DisplayOutput, Message } from "../types";
 
 export function cn(...inputs: ClassValue[]) {
   return twMerge(clsx(inputs));
@@ -136,33 +136,34 @@ export function getToolOutputText(
   return String(content);
 }
 
-export function extractFigures(
+export function extractDisplayOutputs(
   content: string | ContentBlock[],
-): string[] {
-  const figures: string[] = [];
-  const seen = new Set<string>();
+): DisplayOutput[] {
+  const outputs: DisplayOutput[] = [];
 
+  // From multimodal content blocks (vision mode — image_url blocks)
   if (Array.isArray(content)) {
     for (const block of content) {
       if (block.type === "image_url" && block.image_url?.url) {
         const url = block.image_url.url;
-        const b64 = url.includes(",") ? url.split(",")[1] : url;
-        if (b64 && !seen.has(b64)) {
-          seen.add(b64);
-          figures.push(b64);
+        const match = url.match(/^data:([^;]+);base64,(.+)$/);
+        if (match) {
+          outputs.push({ type: match[1], data: match[2] });
+        } else {
+          outputs.push({ type: "image/png", data: url });
         }
       }
     }
   }
 
+  // From JSON string (non-vision mode — display_outputs in payload)
   if (typeof content === "string") {
     try {
       const data = JSON.parse(content);
-      if (data?.figures && Array.isArray(data.figures)) {
-        for (const fig of data.figures) {
-          if (typeof fig === "string" && fig && !seen.has(fig)) {
-            seen.add(fig);
-            figures.push(fig);
+      if (data?.display_outputs && Array.isArray(data.display_outputs)) {
+        for (const out of data.display_outputs) {
+          if (out && typeof out.type === "string" && typeof out.data === "string") {
+            outputs.push({ type: out.type, data: out.data });
           }
         }
       }
@@ -171,5 +172,5 @@ export function extractFigures(
     }
   }
 
-  return figures;
+  return outputs;
 }

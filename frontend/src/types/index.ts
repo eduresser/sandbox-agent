@@ -6,6 +6,11 @@ export interface ContentBlock {
   image_url?: { url: string };
 }
 
+export interface DisplayOutput {
+  type: string;  // MIME type (image/png, text/html, audio/wav, etc.)
+  data: string;  // raw string (HTML/SVG) or base64 (binary types)
+}
+
 export interface ToolCall {
   id: string;
   name: string;
