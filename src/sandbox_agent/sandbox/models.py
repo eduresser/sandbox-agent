@@ -55,7 +55,7 @@ class ExecutionResult:
     stderr: str = ""
     result: dict | None = None
     error: dict | None = None
-    figures: list[str] = field(default_factory=list)
+    display_outputs: list[dict] = field(default_factory=list)
 
 
 @dataclass

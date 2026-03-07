@@ -61,9 +61,38 @@ const sandbox = {
   __dirname: "/workspace",
   module: { exports: {} },
   exports: {},
+  __displayOutputs: [],
+  display: undefined,
 };
 
 const context = vm.createContext(sandbox);
+
+// Rich display function injected into the sandbox.
+// Usage: display({ html: "..." }), display({ image: "b64", mimeType: "image/png" }),
+//        display({ audio: "b64", mimeType: "audio/wav" }), display("raw html string")
+sandbox.display = function (obj) {
+  if (typeof obj === "string") {
+    sandbox.__displayOutputs.push({ type: "text/html", data: obj });
+  } else if (obj && typeof obj === "object") {
+    if (obj.html) {
+      sandbox.__displayOutputs.push({ type: "text/html", data: obj.html });
+    } else if (obj.image) {
+      sandbox.__displayOutputs.push({
+        type: obj.mimeType || "image/png",
+        data: obj.image,
+      });
+    } else if (obj.audio) {
+      sandbox.__displayOutputs.push({
+        type: obj.mimeType || "audio/wav",
+        data: obj.audio,
+      });
+    } else if (obj.svg) {
+      sandbox.__displayOutputs.push({ type: "image/svg+xml", data: obj.svg });
+    } else if (obj.type && obj.data) {
+      sandbox.__displayOutputs.push({ type: obj.type, data: obj.data });
+    }
+  }
+};
 
 // ── const/let → var rewrite ─────────────────────────────
 // In a persistent VM context, `const` and `let` declarations cannot be
@@ -96,13 +125,15 @@ async function execute(code, timeout = 30) {
     table: (data) => stdoutChunks.push(JSON.stringify(data, null, 2)),
   };
 
+  sandbox.__displayOutputs = [];
+
   const response = {
     success: true,
     stdout: "",
     stderr: "",
     result: null,
     error: null,
-    figures: [],
+    display_outputs: [],
   };
 
   const timeoutMs = timeout * 1000;
@@ -203,6 +234,9 @@ async function execute(code, timeout = 30) {
     }
   }
 
+  response.display_outputs = [...sandbox.__displayOutputs];
+  sandbox.__displayOutputs = [];
+
   return response;
 }
 
@@ -223,6 +257,8 @@ function restart() {
     "__dirname",
     "module",
     "exports",
+    "display",
+    "__displayOutputs",
   ]);
 
   for (const key of Object.keys(sandbox)) {

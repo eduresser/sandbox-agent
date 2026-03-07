@@ -112,7 +112,7 @@ def execute_code(
         "stderr": result.stderr,
         "result": result.result,
         "error": result.error,
-        "figures": result.figures,
+        "display_outputs": result.display_outputs,
     }
 
 

@@ -117,7 +117,7 @@ def execute_code(
         timeout: Max execution time in seconds (max 300). Defaults to 30.
 
     Returns:
-        JSON with success, stdout, stderr, result, error, and figures.
+        JSON with success, stdout, stderr, result, error, and display_outputs.
     """
     _set_thread()
     return _core.execute_code(get_manager(), session_id, code, timeout)

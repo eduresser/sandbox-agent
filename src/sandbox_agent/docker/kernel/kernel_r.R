@@ -40,7 +40,7 @@ is_ggplot <- function(obj) {
 }
 
 capture_ggplot <- function(result_val) {
-  figures <- list()
+  outputs <- list()
   plot_file <- tempfile(fileext = ".png")
   on.exit(unlink(plot_file), add = TRUE)
 
@@ -49,10 +49,22 @@ capture_ggplot <- function(result_val) {
     tryCatch({ print(result_val); grDevices::dev.off() },
              error = function(e) tryCatch(grDevices::dev.off(), error = function(x) {}))
     if (file.exists(plot_file) && file.info(plot_file)$size > 200L) {
-      figures[[length(figures) + 1L]] <- base64encode(plot_file)
+      outputs[[length(outputs) + 1L]] <- list(type = "image/png", data = base64encode(plot_file))
     }
   }
-  figures
+  outputs
+}
+
+capture_htmlwidget <- function(val) {
+  if (!requireNamespace("htmlwidgets", quietly = TRUE)) return(NULL)
+  if (!inherits(val, "htmlwidget")) return(NULL)
+  tmp <- tempfile(fileext = ".html")
+  on.exit(unlink(tmp), add = TRUE)
+  tryCatch({
+    htmlwidgets::saveWidget(val, tmp, selfcontained = TRUE)
+    html <- paste(readLines(tmp, warn = FALSE), collapse = "\n")
+    if (nchar(html) > 0L) list(type = "text/html", data = html) else NULL
+  }, error = function(e) NULL)
 }
 
 # ── Execution ────────────────────────────────────────────
@@ -68,7 +80,7 @@ execute <- function(code, timeout = 30) {
     stderr  = "",
     result  = NULL,
     error   = NULL,
-    figures = list()
+    display_outputs = list()
   )
 
   stdout_file <- tempfile()
@@ -106,17 +118,24 @@ execute <- function(code, timeout = 30) {
       response$result <- list("text/plain" = repr)
     }
 
-    # Capture plots: base-R (from the PNG device) or ggplot2 objects.
-    figures <- list()
+    display_outputs <- list()
     if (file.exists(plot_file) && file.info(plot_file)$size > 200L) {
-      figures[[length(figures) + 1L]] <- base64encode(plot_file)
+      display_outputs[[length(display_outputs) + 1L]] <- list(
+        type = "image/png", data = base64encode(plot_file)
+      )
     }
 
-    ggplot_figs <- capture_ggplot(result_val$value)
-    if (length(ggplot_figs) > 0L) {
-      figures <- c(figures, ggplot_figs)
+    ggplot_outs <- capture_ggplot(result_val$value)
+    if (length(ggplot_outs) > 0L) {
+      display_outputs <- c(display_outputs, ggplot_outs)
     }
-    response$figures <- figures
+
+    widget_out <- capture_htmlwidget(result_val$value)
+    if (!is.null(widget_out)) {
+      display_outputs[[length(display_outputs) + 1L]] <- widget_out
+    }
+
+    response$display_outputs <- display_outputs
 
   }, error = function(e) {
     setTimeLimit(elapsed = Inf)

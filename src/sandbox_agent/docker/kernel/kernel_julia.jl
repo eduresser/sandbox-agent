@@ -108,7 +108,7 @@ function execute(code::String, timeout_secs::Int=30)
         "stderr"  => truncate_str(err_str),
         "result"  => nothing,
         "error"   => nothing,
-        "figures" => Any[],
+        "display_outputs" => Any[],
     )
 
     if timed_out[]

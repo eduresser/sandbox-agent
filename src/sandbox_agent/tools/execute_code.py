@@ -22,7 +22,7 @@ def create_execute_code_tool(manager: SandboxManager) -> BaseTool:
             timeout: Max execution time in seconds (max 300). Defaults to 30.
 
         Returns:
-            JSON with success, stdout, stderr, result, error, and figures.
+            JSON with success, stdout, stderr, result, error, and display_outputs.
         """
         return json.dumps(
             core_execute_code(manager, session_id, code, timeout),

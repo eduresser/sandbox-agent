@@ -488,7 +488,7 @@ class SandboxManager:
                     "type": "RuntimeError",
                     "message": "Kernel returned empty response",
                 },
-                "figures": [],
+                "display_outputs": [],
             }
         try:
             return json.loads(raw)
@@ -502,7 +502,7 @@ class SandboxManager:
                     "type": "RuntimeError",
                     "message": f"Kernel returned invalid JSON: {raw[:200]!r}",
                 },
-                "figures": [],
+                "display_outputs": [],
             }
 
     def _wait_for_kernel(self, session_id: str, timeout: int = 60) -> None:
@@ -627,7 +627,7 @@ class SandboxManager:
                     "type": "TimeoutError",
                     "message": f"Execution timed out after {timeout}s",
                 },
-                figures=[],
+                display_outputs=[],
             )
 
         if "stdout" in resp:
