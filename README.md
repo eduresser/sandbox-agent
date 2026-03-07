@@ -135,6 +135,8 @@ Custom endpoints:
 - `GET /threads/{thread_id}/files/download?session_id=...&path=...` — streams exported files from containers
 - `POST /threads/{thread_id}/files/upload` — uploads files to be available for import into sandbox sessions
 - `DELETE /threads/{thread_id}` — also cleans up Docker sessions and storage for that thread (via middleware)
+- `GET /settings` — returns persisted frontend settings merged over backend `.env` defaults
+- `PUT /settings` — persist frontend settings to disk (`storage/frontend_settings.json`)
 
 ### React Frontend
 
@@ -155,7 +157,7 @@ The frontend runs at `http://localhost:5173` (Vite dev server with API proxy to 
 - File upload and download support
 - Thinking block visualization
 - Settings dialog (model, provider, API key, base URL, vision toggle)
-- Persistent config via `localStorage`
+- Persistent settings via server-side API (`GET/PUT /settings`), with backend `.env` defaults as fallback
 
 ### Programmatic
 
@@ -437,6 +439,9 @@ uv run pytest tests/test_cli.py tests/test_http_app.py -v
 
 # Integration tests (requires Docker)
 uv run pytest tests/test_manager.py tests/test_tools.py tests/test_export_files.py tests/test_mcp.py -v
+
+# API integration tests (requires Docker + running API: uv run sandbox-agent api dev)
+uv run pytest tests/test_api.py -v -s
 
 # Full suite
 uv run pytest tests/ -v
