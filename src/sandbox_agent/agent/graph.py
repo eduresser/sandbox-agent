@@ -44,37 +44,77 @@ def _strip_images_from_messages(messages: list) -> list:
     return cleaned
 
 
-def _process_execute_code_content(raw: str, vision: bool) -> str | list[dict]:
-    """Post-process the JSON string returned by execute_code.
+def _prepare_messages_for_llm(messages: list, vision: bool) -> list:
+    """Return a lightweight copy of *messages* suitable for the LLM.
 
-    If *vision* is True and figures are present, returns a multimodal content
-    list (text + image_url blocks).  Otherwise strips figures and returns a
-    plain JSON string.
+    Heavy ``display_outputs`` payloads (base64 images, HTML, audio …) in
+    ToolMessages are replaced with brief summaries so they don't bloat the
+    context window.  When *vision* is enabled, image outputs are re-attached
+    as efficient ``image_url`` content blocks so the model can still "see"
+    them without polluting the text context.
+
+    The full data remains in the persisted state so the frontend can render
+    rich outputs as usual.
     """
-    try:
-        parsed = json.loads(raw)
-    except (json.JSONDecodeError, TypeError):
-        return raw
+    prepared: list = []
+    for msg in messages:
+        if not isinstance(msg, ToolMessage):
+            prepared.append(msg)
+            continue
 
-    if not isinstance(parsed, dict):
-        return raw
+        if isinstance(msg.content, list):
+            text_parts = [b for b in msg.content if b.get("type") == "text"]
+            raw_text = text_parts[0]["text"] if text_parts else ""
+        elif isinstance(msg.content, str):
+            raw_text = msg.content
+        else:
+            prepared.append(msg)
+            continue
 
-    figures = parsed.pop("figures", []) or []
+        try:
+            parsed = json.loads(raw_text)
+        except (json.JSONDecodeError, TypeError):
+            prepared.append(msg)
+            continue
 
-    if vision and figures:
-        text_json = json.dumps(parsed, ensure_ascii=False)
-        content: list[dict] = [{"type": "text", "text": text_json}]
-        for fig_b64 in figures:
-            content.append({
-                "type": "image_url",
-                "image_url": {"url": f"data:image/png;base64,{fig_b64}"},
-            })
-        return content
+        if not isinstance(parsed, dict) or not parsed.get("display_outputs"):
+            if isinstance(msg.content, list):
+                prepared.append(
+                    ToolMessage(content=raw_text, tool_call_id=msg.tool_call_id, name=msg.name)
+                )
+            else:
+                prepared.append(msg)
+            continue
 
-    # Include figures in JSON so frontend can display them when vision=False
-    if figures:
-        parsed["figures"] = figures
-    return json.dumps(parsed, ensure_ascii=False)
+        display_outputs = parsed.pop("display_outputs")
+        summaries: list[str] = []
+        image_blocks: list[dict] = []
+        for out in display_outputs:
+            mime = out.get("type", "unknown")
+            if mime.startswith("image/") and vision and out.get("data"):
+                image_blocks.append({
+                    "type": "image_url",
+                    "image_url": {"url": f"data:{mime};base64,{out['data']}"},
+                })
+                summaries.append(f"[{mime} image displayed to user]")
+            else:
+                summaries.append(f"[{mime} output displayed to user]")
+
+        if summaries:
+            parsed["display_outputs_summary"] = summaries
+
+        new_text = json.dumps(parsed, ensure_ascii=False)
+
+        if image_blocks:
+            new_content: str | list = [{"type": "text", "text": new_text}] + image_blocks
+        else:
+            new_content = new_text
+
+        prepared.append(
+            ToolMessage(content=new_content, tool_call_id=msg.tool_call_id, name=msg.name)
+        )
+
+    return prepared
 
 
 def build_agent(
@@ -147,12 +187,7 @@ def build_agent(
                     )
                     continue
 
-                if tc["name"] == "execute_code":
-                    content = _process_execute_code_content(
-                        raw_result, _vision_enabled(config)
-                    )
-                else:
-                    content = raw_result
+                content = raw_result
 
                 result_messages.append(
                     ToolMessage(content=content, tool_call_id=tc["id"], name=tc["name"])
@@ -205,7 +240,6 @@ def build_agent(
 
         active_llm = _get_llm_for_config(config)
 
-        # Honor vision from configurable (frontend settings)
         cfg = config.get("configurable") or {}
         vision_from_cfg = cfg.get("chat_model_supports_vision")
         if vision_from_cfg is not None:
@@ -215,14 +249,13 @@ def build_agent(
                 "yes",
             )
 
+        vision = _vision_enabled(config)
+        messages = _prepare_messages_for_llm(messages, vision)
+
         has_images = any(
             isinstance(m, ToolMessage) and isinstance(m.content, list)
             for m in messages
         )
-
-        if has_images and vision_state["supported"] is False:
-            messages = _strip_images_from_messages(messages)
-            has_images = False
 
         try:
             response = active_llm.invoke(messages)
@@ -240,7 +273,7 @@ def build_agent(
 
         if has_images and vision_state["supported"] is None:
             vision_state["supported"] = True
-            logger.info("Vision probe succeeded, enabling multimodal figures.")
+            logger.info("Vision probe succeeded, enabling multimodal display outputs.")
 
         return {"messages": [response]}
 

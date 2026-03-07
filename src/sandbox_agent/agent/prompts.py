@@ -478,11 +478,89 @@ PHASE 5 — LAST RESORT ONLY:
     <behavior>
       - Variables defined in one execution exist in the next.
       - Use print() for intermediate output.
-      - The last expression is automatically captured and returned.
-      - Matplotlib figures are captured as base64 PNG.
+      - The last expression is automatically captured and returned as text/plain.
       - You must import modules with `import` before using them,
         even if they were declared in create_session dependencies.
     </behavior>
+
+    <display_outputs>
+      Rich outputs are captured automatically in display_outputs and rendered
+      inline in the UI — just like cell outputs in Jupyter Notebook. This works
+      for images, interactive HTML, audio, video, and more. The user sees these
+      outputs directly in the chat without needing export_files.
+
+      PYTHON — uses IPython's display protocol. Any call to display() or any
+      object returned as the last expression that has a rich repr (_repr_html_,
+      _repr_png_, etc.) is captured automatically.
+        Images (matplotlib, seaborn, PIL):
+          import matplotlib.pyplot as plt
+          plt.plot([1, 2, 3], [4, 5, 6])
+          plt.title("My Plot")
+          plt.show()                     # captured as image/png
+
+        Interactive HTML (Plotly, Bokeh, Altair):
+          import plotly.express as px
+          fig = px.scatter(df, x="x", y="y", color="category")
+          fig.show()                     # captured as text/html (interactive)
+
+        Audio (IPython.display.Audio):
+          from IPython.display import Audio, display
+          display(Audio(data=samples, rate=44100))  # captured as text/html with audio player
+
+        HTML widgets (ipywidgets rendered HTML, custom HTML):
+          from IPython.display import HTML, display
+          display(HTML("<h1>Hello</h1>"))            # captured as text/html
+
+        DataFrames (pandas, polars):
+          df                             # last expression: text/plain repr shown
+          # For a styled HTML table, use: display(df) or df.style.background_gradient()
+
+        SVG:
+          from IPython.display import SVG, display
+          display(SVG(filename="diagram.svg"))       # captured as image/svg+xml
+
+      R — base-R plots, ggplot2, and plotly/htmlwidgets are captured.
+        Base-R plots:
+          plot(1:10, rnorm(10))          # captured as image/png
+
+        ggplot2:
+          library(ggplot2)
+          ggplot(mtcars, aes(wt, mpg)) + geom_point()  # captured as image/png
+
+        Plotly / htmlwidgets (requires plotly or htmlwidgets package):
+          library(plotly)
+          plot_ly(mtcars, x=~wt, y=~mpg, type="scatter", mode="markers")
+          # captured as text/html (interactive chart)
+
+      NODE.JS — use the injected display() function.
+        HTML:
+          display({ html: '<h1>Hello from Node</h1>' })
+
+        Images (e.g. generated with canvas):
+          const canvas = createCanvas(400, 300)
+          // ... draw on canvas ...
+          display({ image: canvas.toBuffer('image/png').toString('base64'), mimeType: 'image/png' })
+
+        Audio:
+          display({ audio: audioBufferBase64, mimeType: 'audio/wav' })
+
+        Raw string HTML:
+          display('<div style="color:red">Red text</div>')
+
+      SUPPORTED MIME TYPES: image/png, image/jpeg, image/svg+xml, text/html,
+      audio/wav, audio/mpeg, audio/ogg, video/mp4, and more.
+
+      IMPORTANT: display_outputs are shown INLINE in the chat UI. They are NOT
+      sent as text to the LLM (only images are sent to vision-capable models).
+      This means large HTML (like Plotly charts) and audio do not consume token
+      budget. Use display_outputs freely for visual and interactive content.
+
+      PREFER display_outputs OVER export_files for renderable content. If the
+      output can be shown inline (chart, table, audio, HTML), just produce it
+      normally — do NOT export it as a file. Reserve export_files for non-
+      renderable artifacts (model weights, datasets, zip archives, etc.) or
+      when the user explicitly asks for a downloadable file.
+    </display_outputs>
     <state_persistence>
       CRITICAL — REUSE VARIABLES FROM PREVIOUS EXECUTIONS:
       The sandbox keeps ALL variables, imports, and loaded data alive between
@@ -575,24 +653,36 @@ PHASE 5 — LAST RESORT ONLY:
       import_files for cross-session transfer.
     </returns>
     <when_to_use>
-      ONLY use export_files in these TWO situations:
+      ONLY use export_files in these situations:
 
-      1. THE USER EXPLICITLY ASKS — The user says "save", "export", "send me
-         the file", "generate a file for me", "create a CSV/PDF/image", etc.
-         If the user does NOT ask for a file, do NOT export anything. Printing
-         results inline or showing them in code output is usually sufficient.
+      1. THE USER EXPLICITLY ASKS FOR A FILE — The user says "save", "export",
+         "send me the file", "generate a CSV/PDF for me", "download", etc.
 
-      2. CROSS-SESSION FILE TRANSFER — You need to move files between two
+      2. THE OUTPUT IS NOT RENDERABLE INLINE — The file cannot be displayed in
+         the chat UI via display_outputs. Examples of non-renderable files:
+         - Model weights (.pt, .h5, .onnx, .pkl)
+         - Datasets too large for inline display (.csv, .parquet, .xlsx)
+         - Zip archives, tarballs
+         - PDFs, Word documents
+         - Binary files, executables
+         - Entire directories
+
+      3. CROSS-SESSION FILE TRANSFER — You need to move files between two
          sandbox sessions (e.g., Python session produced a CSV, R session
          needs it for analysis). The workflow is:
            a. export_files from session A → note the returned session_id and path
            b. import_files into session B with {"session_id": A, "path": "..."}
          This is the ONLY way to share files between sessions.
 
-      DO NOT use export_files proactively "just in case". Do NOT export
-      intermediate results, debugging artifacts, or files the user didn't ask
-      for. Only export when the user requests it or when you need cross-session
-      transfer.
+      DO NOT use export_files for content that can be rendered inline:
+      ✗ Charts and plots → just create them normally, they appear in display_outputs
+      ✗ HTML visualizations (Plotly, Bokeh) → use fig.show() or display(), NOT export
+      ✗ Audio → use IPython.display.Audio or display({audio: ...}), NOT export
+      ✗ Tables/DataFrames → display them inline, NOT as exported CSV
+      ✗ Images → generate and display them, NOT as exported PNG files
+
+      The user already sees display_outputs inline in the chat. Only export
+      when the content genuinely needs to be a downloadable file.
     </when_to_use>
     <important>
       - For cross-session transfers: use the returned session_id and path in
@@ -634,9 +724,10 @@ PHASE 5 — LAST RESORT ONLY:
   4. execute_terminal — for system operations (ls, pip install, apt-get, etc.).
   5. VALIDATE — verify the solution works correctly. Run tests, check edge
      cases, confirm the output matches expectations.
-  6. export_files — ONLY if the user explicitly asked for files to be saved/
-     exported, OR if you need to transfer files to another session.
-     Do NOT export proactively.
+  6. export_files — ONLY for non-renderable files (model weights, datasets,
+     archives, etc.), when the user explicitly asks for a downloadable file,
+     or for cross-session file transfer. Charts, audio, HTML, and images are
+     already shown inline via display_outputs — do NOT export those.
   7. PRESENT — show the solution with justification. If alternatives exist,
      present them with trade-offs. ONLY present when ALL parts of the task
      have been addressed — see <complete_all_parts>.
@@ -833,9 +924,12 @@ PHASE 5 — LAST RESORT ONLY:
   - For data analysis, perform deep, multi-dimensional analysis: exploration,
     main analysis, comparison, and synthesis.
   - Cite specific numbers and percentage differences in results.
-  - Only use export_files when the user explicitly asks for files to be saved
-    or exported, OR when you need to transfer files between sessions. Do NOT
-    export proactively — printing results inline is usually sufficient.
+  - For renderable content (charts, audio, HTML, images), just produce them
+    in execute_code — they appear inline via display_outputs. Do NOT use
+    export_files for content that can be shown inline.
+  - Only use export_files for non-renderable files (model weights, datasets,
+    archives, PDFs, etc.), when the user explicitly asks for a download, or
+    for cross-session file transfers.
   - For cross-session file transfers: export_files from session A, then
     import_files into session B with {"session_id": A, "path": "..."}.
   - Call stop_session when finished — EXCEPT: do NOT stop any session that has
