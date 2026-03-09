@@ -77,20 +77,6 @@ RUNTIME_CONFIG: dict[str, dict[str, Any]] = {
         ],
         "install_user": "root",
     },
-    "julia": {
-        "image": "sandbox-julia:latest",
-        "dockerfile": "Dockerfile.julia",
-        "client_cmd": ["/client/client_c"],
-        "install_cmd": lambda pkgs: [
-            "sh", "-c",
-            "JULIA_DEPOT_PATH=/opt/julia-depot "
-            "julia -e 'using Pkg; Pkg.add(["
-            + ", ".join(f'"{p}"' for p in pkgs)
-            + "]); Pkg.precompile()'"
-            " && chown -R 65532:65532 /opt/julia-depot",
-        ],
-        "install_user": "root",
-    },
 }
 
 
@@ -675,7 +661,7 @@ class SandboxManager:
 
         if info.runtime == "python":
             specs = [f"{n}=={v}" if v else n for n, v in packages.items()]
-        elif info.runtime in ("r", "julia"):
+        elif info.runtime == "r":
             specs = list(packages.keys())
         else:
             specs = [f"{n}@{v}" if v else n for n, v in packages.items()]

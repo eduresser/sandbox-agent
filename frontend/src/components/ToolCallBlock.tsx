@@ -38,7 +38,6 @@ const RUNTIME_LANG: Record<string, string> = {
   python: "python",
   node: "javascript",
   r: "r",
-  julia: "julia",
 };
 
 const MAX_OUTPUT_LINES = 60;

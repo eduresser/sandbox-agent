@@ -33,7 +33,7 @@ mcp = FastMCP(
     "sandbox-agent",
     instructions=(
         "Sandboxed code execution in Docker containers. "
-        "Create isolated Python/Node.js/R/Julia environments, execute code with "
+        "Create isolated Python/Node.js/R environments, execute code with "
         "persistent state, run terminal commands, and import/export files. "
         "Everything that can be answered by code execution should in some "
         "way be answered by this agent."
@@ -90,7 +90,7 @@ def create_session(
     For data analysis, always include pandas and numpy.
 
     Args:
-        language: Sandbox language/runtime. Use "python", "node", "r", or "julia".
+        language: Sandbox language/runtime. Use "python", "node", or "r".
         dependencies: Packages to pre-install. Keys are package names,
             values are version strings (use "" for latest). Always use strings,
             never numbers — e.g. "2.2" not 2.2. Null/None is treated as "".
@@ -113,7 +113,7 @@ def execute_code(
 
     Args:
         session_id: ID returned by create_session.
-        code: Code to execute (Python, Node.js, R, or Julia, depending on the session runtime).
+        code: Code to execute (Python, Node.js, or R, depending on the session runtime).
         timeout: Max execution time in seconds (max 300). Defaults to 30.
 
     Returns:

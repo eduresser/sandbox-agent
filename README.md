@@ -1,6 +1,6 @@
 # Sandbox Agent
 
-LangGraph agent with Docker-based sandboxed code execution. Each session runs in an isolated, hardened Docker container with a persistent kernel — IPython for Python, `vm.createContext` for Node.js, a dedicated R environment, and a Julia REPL. Supports 4 runtimes, provider-agnostic LLM configuration, and vision (auto-detection of multimodal models). Available as an interactive CLI, MCP server (Cursor, Claude Desktop), REST API ([Aegra](https://aegra.dev/)), and React frontend.
+LangGraph agent with Docker-based sandboxed code execution. Each session runs in an isolated, hardened Docker container with a persistent kernel — IPython for Python, `vm.createContext` for Node.js, and a dedicated R environment. Supports 3 runtimes, provider-agnostic LLM configuration, and vision (auto-detection of multimodal models). Available as an interactive CLI, MCP server (Cursor, Claude Desktop), REST API ([Aegra](https://aegra.dev/)), and React frontend.
 
 ## Features
 
@@ -10,10 +10,10 @@ LangGraph agent with Docker-based sandboxed code execution. Each session runs in
 - **Persistent state** — variables survive between code executions (like Jupyter cells)
 - **Checkpointer PostgreSQL** — conversation history persists across restarts (shared with Aegra)
 - **Async support** — Promises (Node.js) and coroutines (Python) are automatically awaited
-- **Multi-runtime** — Python, Node.js, R, and Julia
+- **Multi-runtime** — Python, Node.js, and R
 - **Rich display outputs** — captures matplotlib/ggplot figures, Plotly charts, IPython Audio, HTML widgets, and more; auto-sends images to multimodal LLMs
 - **Provider-agnostic** — works with OpenAI, Anthropic, Google Gemini, Ollama, or any compatible provider via `langchain init_chat_model`
-- **Runtime package install** — `pip install` / `npm install` / `install.packages()` / `Pkg.add()` at session creation or via terminal
+- **Runtime package install** — `pip install` / `npm install` / `install.packages()` at session creation or via terminal
 - **6 tools** — `create_session`, `execute_code`, `execute_terminal`, `import_files`, `export_files`, `stop_session`
 - **MCP server** — expose the same tools via Model Context Protocol (stdio transport)
 - **REST API** — full LangGraph Platform API via [Aegra](https://aegra.dev/) with OpenAPI docs, streaming, thread management
@@ -37,7 +37,7 @@ LangGraph agent with Docker-based sandboxed code execution. Each session runs in
 ## Setup
 
 ```bash
-# Docker — installs (if needed), configures permissions, and builds all 4 images
+# Docker — installs (if needed), configures permissions, and builds all 3 images
 sudo ./setup-docker.sh
 
 # Install Python dependencies (open a new terminal so the docker group is active)
@@ -251,7 +251,7 @@ result = manager.import_files(sid, [
 ])
 ```
 
-Other runtimes work the same way — pass `runtime="node"`, `runtime="r"`, or `runtime="julia"` to `create_session`.
+Other runtimes work the same way — pass `runtime="node"` or `runtime="r"` to `create_session`.
 
 ### Async Code
 
@@ -371,9 +371,8 @@ POSTGRES_PORT=5432
 | Python | `python:3.12-slim` | IPython shell | UNIX socket | IPython + system libs |
 | Node.js | `node:22-slim` | `vm.createContext` | UNIX socket | Bare runtime |
 | R | `rocker/r-ver:4` | Dedicated R env | TCP `:8765` | tidyverse, data.table, ggplot2, readxl, haven, httr2, DBI, RSQLite, rmarkdown, knitr, devtools, glmnet, randomForest |
-| Julia | `julia:1.11-bookworm` | Julia REPL | TCP `:8765` | JSON3, DataFrames, CSV, RDatasets, Statistics, StatsBase, Distributions, HypothesisTests, HTTP, BenchmarkTools |
 
-R and Julia containers use a compiled C client binary for IPC, while Python and Node.js use native clients.
+The R container uses a compiled C client binary for IPC, while Python and Node.js use native clients.
 
 ## Architecture
 
@@ -405,8 +404,6 @@ flowchart TB
         vm.createContext · UNIX socket"]
         R["R
         R env · TCP :8765"]
-        JL["Julia
-        Julia env · TCP :8765"]
     end
 
     subgraph Storage ["Persistence"]
@@ -418,7 +415,7 @@ flowchart TB
     SM --> PG
 ```
 
-Inside each container, a persistent **kernel** (PID 1) holds execution state, and an ephemeral **client** connects to it via UNIX socket (Python/Node.js) or TCP (R/Julia) for each `docker exec` call:
+Inside each container, a persistent **kernel** (PID 1) holds execution state, and an ephemeral **client** connects to it via UNIX socket (Python/Node.js) or TCP (R) for each `docker exec` call:
 
 ```mermaid
 flowchart TB

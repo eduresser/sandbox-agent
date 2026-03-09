@@ -70,5 +70,4 @@ export const RUNTIME_LANGUAGE: Record<string, string> = {
   python: "python",
   node: "javascript",
   r: "r",
-  julia: "julia",
 };

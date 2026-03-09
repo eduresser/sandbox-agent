@@ -13,7 +13,7 @@ from pydantic import BaseModel, Field, field_validator
 
 
 class CreateSessionInput(BaseModel):
-    language: Literal["python", "node", "r", "julia"] = "python"
+    language: Literal["python", "node", "r"] = "python"
     dependencies: dict[str, str] = Field(default_factory=dict)
 
     @field_validator("dependencies", mode="before")

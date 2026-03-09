@@ -21,7 +21,7 @@ def create_create_session_tool(manager: SandboxManager) -> BaseTool:
         For data analysis, always include pandas and numpy.
 
         Args:
-            language: Sandbox language/runtime. Use "python", "node", "r", or "julia".
+            language: Sandbox language/runtime. Use "python", "node", or "r".
             dependencies: Packages to pre-install. Keys are package names,
                 values are version strings (use "" for latest). Always use strings,
                 never numbers — e.g. "2.2" not 2.2. Null/None is treated as "".

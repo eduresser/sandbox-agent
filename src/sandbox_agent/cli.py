@@ -70,7 +70,6 @@ _RUNTIME_LANGUAGE: dict[str, str] = {
     "python": "python",
     "node": "javascript",
     "r": "r",
-    "julia": "julia",
 }
 
 
