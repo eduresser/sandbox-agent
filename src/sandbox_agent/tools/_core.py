@@ -94,6 +94,22 @@ def execute_code(
     *,
     filter_by_thread: bool = True,
 ) -> dict[str, Any]:
+    # Early return with explicit hint when code is empty — avoids confusing
+    # Pydantic validation errors and helps the model self-correct when it
+    # mistakenly calls execute_code without the code parameter.
+    if not code or not code.strip():
+        return {
+            "success": False,
+            "error": "INVALID_INPUT",
+            "hint": (
+                "execute_code REQUIRES the 'code' parameter with the actual code to run. "
+                "You cannot re-run or continue without providing new code. "
+                "Always provide the full code in the 'code' argument — never call "
+                "execute_code with only session_id."
+            ),
+            "details": [{"loc": ["code"], "msg": "The code parameter is required and must not be empty."}],
+        }
+
     try:
         params = ExecuteCodeInput(session_id=session_id, code=code, timeout=timeout)
     except ValidationError as exc:

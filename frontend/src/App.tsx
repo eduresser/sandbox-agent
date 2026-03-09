@@ -28,7 +28,7 @@ export default function App() {
     deleteThread,
   } = useThreads();
 
-  const { messages, streaming, sendMessage, loadMessages } = useChat(
+  const { messages, streaming, sendMessage, editMessage, stopStreaming, loadMessages } = useChat(
     activeThreadId,
     settings,
     createThread,
@@ -63,6 +63,8 @@ export default function App() {
           messages={messages}
           streaming={streaming}
           onSendMessage={sendMessage}
+          onEditMessage={editMessage}
+          onStopStreaming={stopStreaming}
           threadId={activeThreadId}
         />
       </main>

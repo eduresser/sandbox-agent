@@ -1,7 +1,9 @@
+import { useState, useRef, useEffect } from "react";
 import Markdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 import { Prism as SyntaxHighlighter } from "react-syntax-highlighter";
 import { oneDark } from "react-syntax-highlighter/dist/esm/styles/prism";
+import { Pencil } from "lucide-react";
 import type { Message } from "../types";
 import { ToolCallBlock } from "./ToolCallBlock";
 import { ThinkingBlock } from "./ThinkingBlock";
@@ -26,6 +28,7 @@ interface MessageBubbleProps {
   toolResults: Map<string, Message>;
   threadId: string | null;
   sessionRuntimes: Map<string, string>;
+  onEditMessage?: (index: number, newContent: string) => void;
 }
 
 export function MessageBubble({
@@ -36,7 +39,46 @@ export function MessageBubble({
   toolResults,
   threadId,
   sessionRuntimes,
+  onEditMessage,
 }: MessageBubbleProps) {
+  const [isEditing, setIsEditing] = useState(false);
+  const [editContent, setEditContent] = useState("");
+  const textareaRef = useRef<HTMLTextAreaElement>(null);
+  useEffect(() => {
+    if (isEditing && textareaRef.current) {
+      textareaRef.current.focus();
+      const len = textareaRef.current.value.length;
+      textareaRef.current.setSelectionRange(len, len);
+      textareaRef.current.style.height = "auto";
+      textareaRef.current.style.height = `${textareaRef.current.scrollHeight}px`;
+    }
+  }, [isEditing]);
+
+  const handleEditStart = () => {
+    setEditContent(typeof message.content === "string" ? message.content : extractTextContent(message.content));
+    setIsEditing(true);
+  };
+
+  const handleEditCancel = () => {
+    setIsEditing(false);
+    setEditContent("");
+  };
+
+  const handleEditSave = () => {
+    if (!editContent.trim() || !onEditMessage) return;
+    setIsEditing(false);
+    onEditMessage(messageIndex, editContent.trim());
+  };
+
+  const handleEditKeyDown = (e: React.KeyboardEvent<HTMLTextAreaElement>) => {
+    if (e.key === "Enter" && !e.shiftKey) {
+      e.preventDefault();
+      handleEditSave();
+    } else if (e.key === "Escape") {
+      handleEditCancel();
+    }
+  };
+
   const isHuman = message.type === "human" || message.type === "HumanMessage";
   const isAI =
     message.type === "ai" ||
@@ -85,10 +127,60 @@ export function MessageBubble({
   if (!content.trim()) return null;
 
   if (isHuman) {
+    const canEdit = onEditMessage && !streaming && typeof message.content === "string" && !!message.id;
+
+    if (isEditing) {
+      return (
+        <div className="flex justify-end">
+          <div className="flex w-full max-w-[80%] flex-col gap-2">
+            <textarea
+              ref={textareaRef}
+              value={editContent}
+              onChange={(e) => {
+                setEditContent(e.target.value);
+                e.target.style.height = "auto";
+                e.target.style.height = `${e.target.scrollHeight}px`;
+              }}
+              onKeyDown={handleEditKeyDown}
+              rows={1}
+              className="w-full resize-none overflow-hidden rounded-2xl rounded-br-md border border-indigo-400 bg-indigo-700 px-4 py-2.5 text-sm text-white placeholder-indigo-300 focus:outline-none focus:ring-2 focus:ring-indigo-400"
+            />
+            <div className="flex justify-end gap-2">
+              <button
+                onClick={handleEditCancel}
+                className="rounded-lg border border-zinc-600 bg-zinc-800 px-3 py-1 text-xs text-zinc-300 transition-colors hover:bg-zinc-700"
+              >
+                Cancelar
+              </button>
+              <button
+                onClick={handleEditSave}
+                disabled={!editContent.trim()}
+                className="rounded-lg bg-indigo-600 px-3 py-1 text-xs text-white transition-colors hover:bg-indigo-500 disabled:cursor-not-allowed disabled:opacity-50"
+              >
+                Salvar
+              </button>
+            </div>
+          </div>
+        </div>
+      );
+    }
+
     return (
-      <div className="flex justify-end">
-        <div className="max-w-[80%] rounded-2xl rounded-br-md bg-indigo-600 px-4 py-2.5 text-sm text-white">
-          <div className="whitespace-pre-wrap">{content}</div>
+      <div className="group flex justify-end">
+        <div className="flex max-w-[80%] items-start gap-2">
+          {canEdit && (
+            <button
+              onClick={handleEditStart}
+              className="mt-1 flex-shrink-0 rounded-lg p-1 text-zinc-500 opacity-0 transition-all hover:bg-zinc-800 hover:text-zinc-300 group-hover:opacity-100"
+              title="Editar mensagem"
+              aria-label="Editar mensagem"
+            >
+              <Pencil size={14} />
+            </button>
+          )}
+          <div className="rounded-2xl rounded-br-md bg-indigo-600 px-4 py-2.5 text-sm text-white">
+            <div className="whitespace-pre-wrap">{content}</div>
+          </div>
         </div>
       </div>
     );

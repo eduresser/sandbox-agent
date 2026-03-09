@@ -278,7 +278,10 @@ def build_agent(
         return {"messages": [response]}
 
     def should_continue(state: AgentState) -> str:
-        last_message = state["messages"][-1]
+        msgs = state["messages"]
+        if not msgs:
+            return END
+        last_message = msgs[-1]
         if hasattr(last_message, "tool_calls") and last_message.tool_calls:
             return "tools"
         return END

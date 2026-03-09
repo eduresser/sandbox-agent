@@ -1,4 +1,10 @@
-import type { Thread, ThreadState, SSEEvent, UploadedFileMeta } from "../types";
+import type {
+  Thread,
+  ThreadState,
+  SSEEvent,
+  Settings,
+  UploadedFileMeta,
+} from "../types";
 
 const BASE_URL = "/api";
 const ASSISTANT_ID = "sandbox-agent";
@@ -24,14 +30,14 @@ export async function checkHealth(): Promise<boolean> {
   }
 }
 
-export async function getSettings(): Promise<Record<string, unknown>> {
-  return request<Record<string, unknown>>("/settings");
+export async function getSettings(): Promise<Partial<Settings>> {
+  return request<Partial<Settings>>("/settings");
 }
 
 export async function saveSettings(
-  settings: Record<string, unknown>,
-): Promise<Record<string, unknown>> {
-  return request<Record<string, unknown>>("/settings", {
+  settings: Settings,
+): Promise<Partial<Settings>> {
+  return request<Partial<Settings>>("/settings", {
     method: "PUT",
     body: JSON.stringify(settings),
   });
@@ -61,6 +67,16 @@ export async function getThreadState(
   threadId: string,
 ): Promise<ThreadState> {
   return request<ThreadState>(`/threads/${threadId}/state`);
+}
+
+export async function updateThreadState(
+  threadId: string,
+  messages: { type: string; id: string; content: string }[],
+): Promise<void> {
+  await request(`/threads/${threadId}/state`, {
+    method: "POST",
+    body: JSON.stringify({ values: { messages }, as_node: "agent" }),
+  });
 }
 
 export async function uploadFiles(
@@ -94,6 +110,7 @@ export async function* streamRun(
   threadId: string,
   messages: { role: string; content: string }[],
   configurable?: Record<string, string>,
+  signal?: AbortSignal,
 ): AsyncGenerator<SSEEvent> {
   const payload: Record<string, unknown> = {
     assistant_id: ASSISTANT_ID,
@@ -108,6 +125,7 @@ export async function* streamRun(
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify(payload),
+    signal,
   });
 
   if (!res.ok) {

@@ -1,5 +1,5 @@
 import { useState, useRef, useEffect, useMemo } from "react";
-import { Send, Loader2, Paperclip, X } from "lucide-react";
+import { Send, Loader2, Paperclip, Square, X } from "lucide-react";
 import type { Message } from "../types";
 import { MessageBubble } from "./MessageBubble";
 import { extractSessions } from "../lib/utils";
@@ -8,6 +8,8 @@ interface ChatAreaProps {
   messages: Message[];
   streaming: boolean;
   onSendMessage: (content: string, files?: File[]) => void;
+  onEditMessage: (index: number, newContent: string) => void;
+  onStopStreaming: () => void;
   threadId: string | null;
 }
 
@@ -15,6 +17,8 @@ export function ChatArea({
   messages,
   streaming,
   onSendMessage,
+  onEditMessage,
+  onStopStreaming,
   threadId,
 }: ChatAreaProps) {
   const [input, setInput] = useState("");
@@ -106,6 +110,7 @@ export function ChatArea({
               toolResults={toolResults}
               threadId={threadId}
               sessionRuntimes={sessionRuntimes}
+              onEditMessage={onEditMessage}
             />
           ))}
           {streaming && (
@@ -167,11 +172,13 @@ export function ChatArea({
               style={{ minHeight: "2.5rem" }}
             />
             <button
-              onClick={handleSubmit}
-              disabled={(!input.trim() && pendingFiles.length === 0) || streaming}
+              onClick={streaming ? onStopStreaming : handleSubmit}
+              disabled={!streaming && !input.trim() && pendingFiles.length === 0}
               className="flex items-center justify-center rounded-xl bg-indigo-600 px-4 text-white transition-colors hover:bg-indigo-500 disabled:cursor-not-allowed disabled:opacity-50"
+              title={streaming ? "Stop response" : "Send message"}
+              aria-label={streaming ? "Stop response" : "Send message"}
             >
-              <Send size={18} />
+              {streaming ? <Square size={18} fill="currentColor" /> : <Send size={18} />}
             </button>
           </div>
         </div>

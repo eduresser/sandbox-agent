@@ -1,4 +1,4 @@
-import { useState, useCallback } from "react";
+import { useState, useCallback, useRef } from "react";
 import type { Message, Settings, UploadedFileMeta } from "../types";
 import * as api from "../api/aegra";
 import { formatFileSize } from "../lib/utils";
@@ -23,6 +23,7 @@ export function useChat(
 ) {
   const [messages, setMessages] = useState<Message[]>([]);
   const [streaming, setStreaming] = useState(false);
+  const abortControllerRef = useRef<AbortController | null>(null);
 
   const loadMessages = useCallback(async () => {
     if (!threadId) {
@@ -74,6 +75,9 @@ export function useChat(
       setMessages((prev) => [...prev, userMsg]);
 
       try {
+        const abortController = new AbortController();
+        abortControllerRef.current = abortController;
+
         const configurable: Record<string, string> = {
           chat_model: settings.chatModel,
           chat_model_provider: settings.chatModelProvider,
@@ -86,6 +90,7 @@ export function useChat(
           threadIdToUse,
           [{ role: "human", content: fullContent }],
           configurable,
+          abortController.signal,
         )) {
           if (event.event === "error") {
             const errData = event.data;
@@ -109,6 +114,9 @@ export function useChat(
           }
         }
       } catch (err) {
+        if (err instanceof DOMException && err.name === "AbortError") {
+          return;
+        }
         console.error("Stream error:", err);
         const errorMsg: Message = {
           type: "ai",
@@ -116,11 +124,107 @@ export function useChat(
         };
         setMessages((prev) => [...prev, errorMsg]);
       } finally {
+        abortControllerRef.current = null;
         setStreaming(false);
       }
     },
     [threadId, streaming, settings, createThread],
   );
 
-  return { messages, streaming, sendMessage, loadMessages, setMessages };
+  const editMessage = useCallback(
+    async (messageIndex: number, newContent: string) => {
+      if (!threadId || streaming || !newContent.trim()) return;
+
+      const msgsToRemove = messages.slice(messageIndex);
+      const missingId = msgsToRemove.some((m) => !m.id);
+      if (missingId) {
+        console.error("Cannot edit: one or more messages lack an id.");
+        return;
+      }
+
+      const editedMsg: Message = {
+        ...messages[messageIndex],
+        content: newContent,
+      };
+
+      setMessages([...messages.slice(0, messageIndex), editedMsg]);
+      setStreaming(true);
+
+      try {
+        const removals = msgsToRemove.map((m) => ({
+          type: "remove",
+          id: m.id as string,
+          content: "",
+        }));
+        await api.updateThreadState(threadId, removals);
+
+        const abortController = new AbortController();
+        abortControllerRef.current = abortController;
+
+        const configurable: Record<string, string> = {
+          chat_model: settings.chatModel,
+          chat_model_provider: settings.chatModelProvider,
+          chat_model_api_key: settings.chatModelApiKey,
+          chat_model_base_url: settings.chatModelBaseUrl ?? "",
+          chat_model_supports_vision: String(settings.supportsVision),
+        };
+
+        for await (const event of api.streamRun(
+          threadId,
+          [{ role: "human", content: newContent }],
+          configurable,
+          abortController.signal,
+        )) {
+          if (event.event === "error") {
+            const errData = event.data;
+            let errMsg = "An unexpected error occurred.";
+            if (typeof errData === "string") {
+              errMsg = errData;
+            } else if (typeof errData === "object" && errData !== null) {
+              const obj = errData as Record<string, unknown>;
+              errMsg = (obj.message ?? obj.error ?? JSON.stringify(obj)) as string;
+            }
+            throw new Error(errMsg);
+          }
+          if (
+            event.event === "values" &&
+            typeof event.data === "object" &&
+            event.data !== null
+          ) {
+            const data = event.data as Record<string, unknown>;
+            const allMsgs = (data.messages ?? []) as Message[];
+            setMessages(allMsgs);
+          }
+        }
+      } catch (err) {
+        if (err instanceof DOMException && err.name === "AbortError") {
+          return;
+        }
+        console.error("Edit stream error:", err);
+        const errorMsg: Message = {
+          type: "ai",
+          content: `Error: ${err instanceof Error ? err.message : String(err)}`,
+        };
+        setMessages((prev) => [...prev, errorMsg]);
+      } finally {
+        abortControllerRef.current = null;
+        setStreaming(false);
+      }
+    },
+    [threadId, streaming, messages, settings],
+  );
+
+  const stopStreaming = useCallback(() => {
+    abortControllerRef.current?.abort();
+  }, []);
+
+  return {
+    messages,
+    streaming,
+    sendMessage,
+    editMessage,
+    stopStreaming,
+    loadMessages,
+    setMessages,
+  };
 }

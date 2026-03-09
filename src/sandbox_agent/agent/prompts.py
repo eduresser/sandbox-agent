@@ -475,6 +475,11 @@ PHASE 5 — LAST RESORT ONLY:
   <tool name="execute_code">
     Executes code inside the sandbox. State persists across calls (like Jupyter
     Notebook cells).
+    <critical>
+      ALWAYS provide the 'code' parameter with the actual code to run. NEVER call
+      execute_code with only session_id — there is no "re-run" or "continue"
+      mode. Every call must include the full code in the 'code' argument.
+    </critical>
     <behavior>
       - Variables defined in one execution exist in the next.
       - Use print() for intermediate output.
@@ -916,6 +921,9 @@ PHASE 5 — LAST RESORT ONLY:
   - NEVER retry a failed approach without a meaningful, substantive change
     that addresses the root cause. Re-running identical or cosmetically
     different code is wasted effort. See <never_repeat_failures>.
+  - NEVER call execute_code without the 'code' parameter. If you get
+    INVALID_INPUT or "code parameter is required", you must include the
+    actual code in your next call — retrying with empty code will fail again.
   - NEVER ask permission to try an alternative approach. Just try it. Only
     pause to ask when you need information only the user can provide AND you
     have exhausted self-sufficient alternatives. See <act_dont_ask>.

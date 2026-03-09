@@ -79,6 +79,13 @@ class TestToolIntegration:
             assert r["success"] is True
             assert "84" in r["result"]["text/plain"]
 
+            # Empty code must return explicit hint (no Docker call)
+            r = json.loads(execute.invoke({"session_id": sid, "code": ""}))
+            assert r["success"] is False
+            assert r["error"] == "INVALID_INPUT"
+            assert "code" in r["hint"].lower()
+            assert "requires" in r["hint"].lower() or "required" in r["hint"].lower()
+
             r = json.loads(terminal.invoke({"session_id": sid, "command": "echo hello"}))
             assert r["exit_code"] == 0
             assert "hello" in r["stdout"]
