@@ -1,6 +1,6 @@
 [project]
 name = "sandbox-agent"
-version = "2.0.0"
+version = "3.0.0"
 description = "LangGraph agent with Docker-based sandboxed code execution (Python, Node.js, R) via persistent kernels."
 readme = "README.md"
 authors = [

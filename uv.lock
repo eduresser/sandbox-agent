@@ -3288,7 +3288,7 @@ wheels = [
 
 [[package]]
 name = "sandbox-agent"
-version = "2.0.0"
+version = "3.0.0"
 source = { editable = "." }
 dependencies = [
     { name = "aegra-cli", version = "0.6.0", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version < '3.12'" },
