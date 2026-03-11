@@ -10,7 +10,6 @@ from __future__ import annotations
 
 import atexit
 import contextvars
-import io
 import json
 import logging
 import shlex
@@ -18,7 +17,6 @@ import shutil
 import signal
 import subprocess
 import threading
-import zipfile
 import time
 import uuid
 from datetime import datetime, timezone
@@ -763,93 +761,107 @@ class SandboxManager:
 
                 try:
                     src_container = src_info.container_name
-                    parent = str(Path(src_path_norm).parent)
-                    name = Path(src_path_norm).name
-                    cmd = f"cd {shlex.quote(parent)} && zip -r - {shlex.quote(name)}"
-                    tmp_zip = f"/workspace/.import_{uuid.uuid4().hex[:12]}.zip"
-                    proc_zip = subprocess.Popen(
-                        [
-                            "docker", "exec", "-i", src_container,
-                            "sh", "-c", cmd,
-                        ],
-                        stdout=subprocess.PIPE,
-                        stderr=subprocess.PIPE,
-                    )
-                    proc_cat = subprocess.run(
-                        [
-                            "docker", "exec", "-i", info.container_name,
-                            "sh", "-c", f"cat > {shlex.quote(tmp_zip)}",
-                        ],
-                        stdin=proc_zip.stdout,
-                        capture_output=True,
-                        timeout=120,
-                    )
-                    proc_zip.wait()
-                    proc_extract = subprocess.run(
-                        [
-                            "docker", "exec", "-i", info.container_name,
-                            "unzip", "-q", "-o", "-d", "/workspace", tmp_zip,
-                        ],
-                        capture_output=True,
-                        timeout=120,
-                    )
-                    subprocess.run(
-                        ["docker", "exec", "-i", info.container_name, "rm", "-f", tmp_zip],
+                    dest_parent = str(Path(remote_path).parent)
+
+                    is_file = subprocess.run(
+                        ["docker", "exec", "-i", src_container, "test", "-f", src_path_norm],
                         capture_output=True,
                         timeout=10,
-                    )
-                    if proc_zip.returncode != 0:
-                        err = (proc_zip.stderr.read() or b"").decode(errors="replace")[:500]
-                        results.append(ImportFileResult(
-                            source=f"{src_session_id}:{src_path_norm}",
-                            destination=remote_path,
-                            success=False,
-                            error=f"zip failed: {err}",
-                        ))
-                        all_ok = False
-                        continue
-                    if proc_cat.returncode != 0:
-                        err = (proc_cat.stderr or b"").decode(errors="replace")[:500]
-                        results.append(ImportFileResult(
-                            source=f"{src_session_id}:{src_path_norm}",
-                            destination=remote_path,
-                            success=False,
-                            error=f"Failed to write zip to container: {err}",
-                        ))
-                        all_ok = False
-                        continue
-                    if proc_extract.returncode != 0:
-                        err = proc_extract.stderr.decode(errors="replace")[:500]
-                        if not err and proc_extract.stdout:
-                            err = proc_extract.stdout.decode(errors="replace")[:500]
-                        if not err:
-                            err = f"exit code {proc_extract.returncode}"
-                        results.append(ImportFileResult(
-                            source=f"{src_session_id}:{src_path_norm}",
-                            destination=remote_path,
-                            success=False,
-                            error=f"unzip failed: {err}",
-                        ))
-                        all_ok = False
-                        continue
+                    ).returncode == 0
 
-                    # Move to destination if it differs from extracted path
-                    extracted_name = Path(src_path_norm).name
-                    if remote_path != f"/workspace/{extracted_name}":
-                        dest_parent = str(Path(remote_path).parent)
-                        subprocess.run(
-                            ["docker", "exec", "-i", info.container_name, "mkdir", "-p", dest_parent],
-                            capture_output=True,
-                            timeout=10,
+                    if is_file:
+                        proc_src = subprocess.Popen(
+                            ["docker", "exec", "-i", src_container, "cat", src_path_norm],
+                            stdout=subprocess.PIPE,
+                            stderr=subprocess.PIPE,
                         )
-                        subprocess.run(
+                        proc_dst = subprocess.run(
                             [
                                 "docker", "exec", "-i", info.container_name,
-                                "mv", f"/workspace/{extracted_name}", remote_path,
+                                "sh", "-c",
+                                f"mkdir -p {shlex.quote(dest_parent)} && "
+                                f"cat > {shlex.quote(remote_path)}",
                             ],
+                            stdin=proc_src.stdout,
                             capture_output=True,
-                            timeout=10,
+                            timeout=300,
                         )
+                        proc_src.wait()
+                        if proc_src.returncode != 0:
+                            err = (proc_src.stderr.read() or b"").decode(errors="replace")[:500]
+                            results.append(ImportFileResult(
+                                source=f"{src_session_id}:{src_path_norm}",
+                                destination=remote_path,
+                                success=False,
+                                error=f"Failed to read from source container: {err}",
+                            ))
+                            all_ok = False
+                            continue
+                        if proc_dst.returncode != 0:
+                            err = (proc_dst.stderr or b"").decode(errors="replace")[:500]
+                            results.append(ImportFileResult(
+                                source=f"{src_session_id}:{src_path_norm}",
+                                destination=remote_path,
+                                success=False,
+                                error=f"Failed to write to destination container: {err}",
+                            ))
+                            all_ok = False
+                            continue
+                    else:
+                        parent = str(Path(src_path_norm).parent)
+                        name = Path(src_path_norm).name
+                        proc_tar = subprocess.Popen(
+                            [
+                                "docker", "exec", "-i", src_container,
+                                "sh", "-c",
+                                f"cd {shlex.quote(parent)} && tar -cf - {shlex.quote(name)}",
+                            ],
+                            stdout=subprocess.PIPE,
+                            stderr=subprocess.PIPE,
+                        )
+                        proc_extract = subprocess.run(
+                            [
+                                "docker", "exec", "-i", info.container_name,
+                                "sh", "-c",
+                                f"mkdir -p {shlex.quote(dest_parent)} && "
+                                f"tar -xf - -C {shlex.quote(dest_parent)}",
+                            ],
+                            stdin=proc_tar.stdout,
+                            capture_output=True,
+                            timeout=300,
+                        )
+                        proc_tar.wait()
+                        if proc_tar.returncode != 0:
+                            err = (proc_tar.stderr.read() or b"").decode(errors="replace")[:500]
+                            results.append(ImportFileResult(
+                                source=f"{src_session_id}:{src_path_norm}",
+                                destination=remote_path,
+                                success=False,
+                                error=f"tar from source failed: {err}",
+                            ))
+                            all_ok = False
+                            continue
+                        if proc_extract.returncode != 0:
+                            err = proc_extract.stderr.decode(errors="replace")[:500]
+                            results.append(ImportFileResult(
+                                source=f"{src_session_id}:{src_path_norm}",
+                                destination=remote_path,
+                                success=False,
+                                error=f"tar extraction failed: {err}",
+                            ))
+                            all_ok = False
+                            continue
+
+                        extracted_path = f"{dest_parent}/{name}"
+                        if extracted_path != remote_path:
+                            subprocess.run(
+                                [
+                                    "docker", "exec", "-i", info.container_name,
+                                    "mv", extracted_path, remote_path,
+                                ],
+                                capture_output=True,
+                                timeout=10,
+                            )
 
                     size = 0
                     try:
@@ -910,62 +922,63 @@ class SandboxManager:
                     else:
                         size = sum(f.stat().st_size for f in local_path.rglob("*") if f.is_file())
 
-                    zip_buf = io.BytesIO()
-                    arcname = Path(remote_path).name
-                    with zipfile.ZipFile(zip_buf, "w", zipfile.ZIP_DEFLATED) as zf:
-                        if local_path.is_file():
-                            zf.write(local_path, arcname)
-                        else:
-                            for f in local_path.rglob("*"):
-                                if f.is_file():
-                                    zf.write(f, arcname / f.relative_to(local_path))
-                    zip_buf.seek(0)
-                    zip_bytes = zip_buf.read()
+                    dest_parent = str(Path(remote_path).parent)
 
-                    dest_dir = str(Path(remote_path).parent)
-                    tmp_zip = f"/workspace/.import_{uuid.uuid4().hex[:12]}.zip"
-                    proc_cat = subprocess.run(
-                        [
-                            "docker", "exec", "-i", info.container_name,
-                            "sh", "-c", f"cat > {shlex.quote(tmp_zip)}",
-                        ],
-                        input=zip_bytes,
-                        capture_output=True,
-                        timeout=120,
-                    )
-                    proc = subprocess.run(
-                        [
-                            "docker", "exec", "-i", info.container_name,
-                            "unzip", "-q", "-o", "-d", dest_dir, tmp_zip,
-                        ],
-                        capture_output=True,
-                        timeout=120,
-                    )
-                    subprocess.run(
-                        ["docker", "exec", "-i", info.container_name, "rm", "-f", tmp_zip],
-                        capture_output=True,
-                        timeout=10,
-                    )
-                    if proc_cat.returncode != 0:
-                        err = (proc_cat.stderr or b"").decode(errors="replace")[:500]
-                        results.append(ImportFileResult(
-                            source=src, destination=remote_path, success=False,
-                            error=f"Failed to write zip to container: {err}",
-                        ))
-                        all_ok = False
-                        continue
-                    if proc.returncode != 0:
-                        err = proc.stderr.decode(errors="replace")[:500]
-                        if not err and proc.stdout:
-                            err = proc.stdout.decode(errors="replace")[:500]
-                        if not err:
-                            err = f"exit code {proc.returncode}"
-                        results.append(ImportFileResult(
-                            source=src, destination=remote_path, success=False,
-                            error=f"unzip failed: {err}",
-                        ))
-                        all_ok = False
-                        continue
+                    if local_path.is_file():
+                        with open(local_path, "rb") as f:
+                            proc = subprocess.run(
+                                [
+                                    "docker", "exec", "-i", info.container_name,
+                                    "sh", "-c",
+                                    f"mkdir -p {shlex.quote(dest_parent)} && "
+                                    f"cat > {shlex.quote(remote_path)}",
+                                ],
+                                stdin=f,
+                                capture_output=True,
+                                timeout=300,
+                            )
+                        if proc.returncode != 0:
+                            err = (proc.stderr or b"").decode(errors="replace")[:500]
+                            results.append(ImportFileResult(
+                                source=src, destination=remote_path, success=False,
+                                error=f"Failed to stream file to container: {err}",
+                            ))
+                            all_ok = False
+                            continue
+                    else:
+                        proc_tar = subprocess.Popen(
+                            ["tar", "-cf", "-", "-C", str(local_path), "."],
+                            stdout=subprocess.PIPE,
+                            stderr=subprocess.PIPE,
+                        )
+                        proc = subprocess.run(
+                            [
+                                "docker", "exec", "-i", info.container_name,
+                                "sh", "-c",
+                                f"mkdir -p {shlex.quote(remote_path)} && "
+                                f"tar -xf - -C {shlex.quote(remote_path)}",
+                            ],
+                            stdin=proc_tar.stdout,
+                            capture_output=True,
+                            timeout=300,
+                        )
+                        proc_tar.wait()
+                        if proc_tar.returncode != 0:
+                            tar_err = (proc_tar.stderr.read() or b"").decode(errors="replace")[:500]
+                            results.append(ImportFileResult(
+                                source=src, destination=remote_path, success=False,
+                                error=f"tar creation failed: {tar_err}",
+                            ))
+                            all_ok = False
+                            continue
+                        if proc.returncode != 0:
+                            err = proc.stderr.decode(errors="replace")[:500]
+                            results.append(ImportFileResult(
+                                source=src, destination=remote_path, success=False,
+                                error=f"tar extraction failed: {err}",
+                            ))
+                            all_ok = False
+                            continue
 
                     results.append(ImportFileResult(
                         source=src, destination=remote_path,
