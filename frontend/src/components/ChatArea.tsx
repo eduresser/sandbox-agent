@@ -197,7 +197,7 @@ export function ChatArea({
               ))}
             </div>
           )}
-          <div className="flex w-full min-w-0 gap-3">
+          <div className="flex w-full min-w-0 items-end gap-3">
             <input
               ref={fileInputRef}
               type="file"
@@ -207,7 +207,7 @@ export function ChatArea({
             />
             <button
               onClick={() => fileInputRef.current?.click()}
-              className="flex items-center justify-center rounded-xl border border-zinc-700 bg-zinc-800 px-3 text-zinc-400 transition-colors hover:bg-zinc-700 hover:text-zinc-200"
+              className="flex h-10 shrink-0 items-center justify-center rounded-xl border border-zinc-700 bg-zinc-800 px-3 text-zinc-400 transition-colors hover:bg-zinc-700 hover:text-zinc-200"
               title="Upload files"
             >
               <Paperclip size={18} />
@@ -225,7 +225,7 @@ export function ChatArea({
             <button
               onClick={streaming ? onStopStreaming : handleSubmit}
               disabled={!streaming && !input.trim() && pendingFiles.length === 0}
-              className="flex items-center justify-center rounded-xl bg-indigo-600 px-4 text-white transition-colors hover:bg-indigo-500 disabled:cursor-not-allowed disabled:opacity-50"
+              className="flex h-10 shrink-0 items-center justify-center rounded-xl bg-indigo-600 px-4 text-white transition-colors hover:bg-indigo-500 disabled:cursor-not-allowed disabled:opacity-50"
               title={streaming ? "Stop response" : "Send message"}
               aria-label={streaming ? "Stop response" : "Send message"}
             >
