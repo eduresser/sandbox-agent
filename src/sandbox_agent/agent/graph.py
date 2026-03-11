@@ -12,6 +12,7 @@ from langchain_core.messages import AIMessage, SystemMessage, ToolMessage
 from langchain_core.runnables import RunnableConfig
 from langgraph.graph import END, StateGraph
 
+from sandbox_agent.agent.configuration import Configuration
 from sandbox_agent.agent.prompts import SYSTEM_PROMPT
 from sandbox_agent.agent.state import AgentState
 from sandbox_agent.clients import get_chat_model
@@ -151,11 +152,9 @@ def build_agent(
         "supported": vision_override,
     }
 
-    def _vision_enabled(config: RunnableConfig) -> bool:
-        cfg = config.get("configurable") or {}
-        vision_from_cfg = cfg.get("chat_model_supports_vision")
-        if vision_from_cfg is not None:
-            return str(vision_from_cfg).lower() in ("true", "1", "yes")
+    def _vision_enabled(cfg: Configuration) -> bool:
+        if cfg.chat_model_supports_vision is not None:
+            return cfg.chat_model_supports_vision
         v = vision_state["supported"]
         return v is True or v is None  # None means "try it"
 
@@ -199,35 +198,35 @@ def build_agent(
 
     _override_cache: dict[str, BaseChatModel] = {}
 
-    def _get_llm_for_config(config: RunnableConfig) -> BaseChatModel:
-        """Return an LLM bound with tools, using overrides from configurable if present."""
-        configurable = (config.get("configurable") or {})
-        model = configurable.get("chat_model")
-        provider = configurable.get("chat_model_provider")
-        api_key = configurable.get("chat_model_api_key")
+    def _get_llm_for_config(cfg: Configuration) -> BaseChatModel:
+        """Return an LLM bound with tools, using overrides from Configuration."""
+        cache_key = (
+            f"{cfg.chat_model}"
+            f"|{cfg.chat_model_provider}"
+            f"|{hash(cfg.chat_model_api_key or '')}"
+            f"|{cfg.chat_model_base_url or ''}"
+        )
 
-        if not model and not provider and not api_key:
+        default_key = (
+            f"{settings.CHAT_MODEL}"
+            f"|{settings.CHAT_MODEL_PROVIDER}"
+            f"|{hash(settings.CHAT_MODEL_API_KEY or '')}"
+            f"|{settings.CHAT_MODEL_BASE_URL or ''}"
+        )
+        if cache_key == default_key:
             return llm_with_tools
 
-        base_url = configurable.get("chat_model_base_url") or settings.CHAT_MODEL_BASE_URL
-        effective_key = api_key or settings.CHAT_MODEL_API_KEY
-        cache_key = (
-            f"{model or settings.CHAT_MODEL}"
-            f"|{provider or settings.CHAT_MODEL_PROVIDER}"
-            f"|{hash(effective_key)}"
-            f"|{base_url or ''}"
-        )
         if cache_key in _override_cache:
             return _override_cache[cache_key]
 
         kwargs: dict[str, Any] = {
-            "model": model or settings.CHAT_MODEL,
-            "model_provider": provider or settings.CHAT_MODEL_PROVIDER,
+            "model": cfg.chat_model,
+            "model_provider": cfg.chat_model_provider,
         }
-        if base_url:
-            kwargs["base_url"] = base_url
-        if effective_key:
-            kwargs["api_key"] = effective_key
+        if cfg.chat_model_base_url:
+            kwargs["base_url"] = cfg.chat_model_base_url
+        if cfg.chat_model_api_key:
+            kwargs["api_key"] = cfg.chat_model_api_key
 
         override = init_chat_model(**kwargs).bind_tools(tools)
         _override_cache[cache_key] = override
@@ -238,18 +237,13 @@ def build_agent(
         if not messages or not isinstance(messages[0], SystemMessage):
             messages = [SystemMessage(content=SYSTEM_PROMPT), *messages]
 
-        active_llm = _get_llm_for_config(config)
+        cfg = Configuration.from_runnable_config(config)
+        active_llm = _get_llm_for_config(cfg)
 
-        cfg = config.get("configurable") or {}
-        vision_from_cfg = cfg.get("chat_model_supports_vision")
-        if vision_from_cfg is not None:
-            vision_state["supported"] = str(vision_from_cfg).lower() in (
-                "true",
-                "1",
-                "yes",
-            )
+        if cfg.chat_model_supports_vision is not None:
+            vision_state["supported"] = cfg.chat_model_supports_vision
 
-        vision = _vision_enabled(config)
+        vision = _vision_enabled(cfg)
         messages = _prepare_messages_for_llm(messages, vision)
 
         has_images = any(
@@ -286,7 +280,7 @@ def build_agent(
             return "tools"
         return END
 
-    graph = StateGraph(AgentState)
+    graph = StateGraph(AgentState, config_schema=Configuration)
     graph.add_node("agent", call_model)
     graph.add_node("tools", tool_node)
 
