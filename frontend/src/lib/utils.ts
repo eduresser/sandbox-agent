@@ -38,6 +38,34 @@ export function formatFileSize(bytes: number): string {
   return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
 }
 
+export interface ParsedFileMeta {
+  name: string;
+  size: string;
+}
+
+const UPLOADED_FILES_SEPARATOR = "\n\n**Uploaded files:**\n";
+
+export function parseUploadedFiles(content: string): {
+  text: string;
+  files: ParsedFileMeta[];
+} {
+  const idx = content.indexOf(UPLOADED_FILES_SEPARATOR);
+  if (idx === -1) return { text: content, files: [] };
+
+  const text = content.slice(0, idx).trim();
+  const fileBlock = content.slice(idx + UPLOADED_FILES_SEPARATOR.length);
+  const files: ParsedFileMeta[] = [];
+
+  for (const line of fileBlock.split("\n")) {
+    const match = line.match(/^- `(.+?)` \((.+?)\) saved at `/);
+    if (match) {
+      files.push({ name: match[1], size: match[2] });
+    }
+  }
+
+  return { text, files };
+}
+
 export function timeAgo(isoStr: string): string {
   try {
     const dt = new Date(isoStr);

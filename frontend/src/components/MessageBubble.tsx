@@ -3,12 +3,12 @@ import Markdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 import { Prism as SyntaxHighlighter } from "react-syntax-highlighter";
 import { oneDark } from "react-syntax-highlighter/dist/esm/styles/prism";
-import { Pencil } from "lucide-react";
+import { Pencil, FileText } from "lucide-react";
 import type { Message } from "../types";
 import { ToolCallBlock } from "./ToolCallBlock";
 import { ThinkingBlock } from "./ThinkingBlock";
 import { ClickableImage } from "./ImageLightbox";
-import { extractTextContent, extractThinking, getToolOutputText } from "../lib/utils";
+import { extractTextContent, extractThinking, getToolOutputText, parseUploadedFiles } from "../lib/utils";
 
 /** True if there is any non-Tool message after this one (next AI with tool_calls, final AI content, or Human). */
 function hasNextMessageAfterTools(messages: Message[], fromIndex: number): boolean {
@@ -128,6 +128,7 @@ export function MessageBubble({
 
   if (isHuman) {
     const canEdit = onEditMessage && !streaming && typeof message.content === "string" && !!message.id;
+    const { text: cleanText, files: attachedFiles } = parseUploadedFiles(content);
 
     if (isEditing) {
       return (
@@ -178,8 +179,26 @@ export function MessageBubble({
               <Pencil size={14} />
             </button>
           )}
-          <div className="rounded-2xl rounded-br-md bg-indigo-600 px-4 py-2.5 text-sm text-white">
-            <div className="whitespace-pre-wrap">{content}</div>
+          <div className="flex flex-col items-end gap-1.5">
+            {cleanText && (
+              <div className="rounded-2xl rounded-br-md bg-indigo-600 px-4 py-2.5 text-sm text-white">
+                <div className="whitespace-pre-wrap">{cleanText}</div>
+              </div>
+            )}
+            {attachedFiles.length > 0 && (
+              <div className="flex flex-wrap justify-end gap-1.5">
+                {attachedFiles.map((f, i) => (
+                  <div
+                    key={i}
+                    className="flex items-center gap-2 rounded-xl border border-indigo-500/30 bg-indigo-500/20 px-3 py-1.5 text-xs text-indigo-100"
+                  >
+                    <FileText size={14} className="flex-shrink-0 text-indigo-300" />
+                    <span className="max-w-[180px] truncate font-medium">{f.name}</span>
+                    <span className="text-indigo-300/70">{f.size}</span>
+                  </div>
+                ))}
+              </div>
+            )}
           </div>
         </div>
       </div>

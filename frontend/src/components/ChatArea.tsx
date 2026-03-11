@@ -1,5 +1,5 @@
-import { useState, useRef, useEffect, useMemo } from "react";
-import { Send, Loader2, Paperclip, Square, X } from "lucide-react";
+import { useState, useRef, useEffect, useMemo, useCallback } from "react";
+import { Send, Loader2, Paperclip, Square, X, Upload } from "lucide-react";
 import type { Message } from "../types";
 import { MessageBubble } from "./MessageBubble";
 import { extractSessions } from "../lib/utils";
@@ -23,6 +23,8 @@ export function ChatArea({
 }: ChatAreaProps) {
   const [input, setInput] = useState("");
   const [pendingFiles, setPendingFiles] = useState<File[]>([]);
+  const [isDragging, setIsDragging] = useState(false);
+  const dragCounterRef = useRef(0);
   const bottomRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLTextAreaElement>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
@@ -91,8 +93,56 @@ export function ChatArea({
     el.style.height = `${Math.min(el.scrollHeight, 200)}px`;
   }, [input]);
 
+  const handleDragEnter = useCallback((e: React.DragEvent) => {
+    e.preventDefault();
+    e.stopPropagation();
+    dragCounterRef.current += 1;
+    if (e.dataTransfer.types.includes("Files")) {
+      setIsDragging(true);
+    }
+  }, []);
+
+  const handleDragLeave = useCallback((e: React.DragEvent) => {
+    e.preventDefault();
+    e.stopPropagation();
+    dragCounterRef.current -= 1;
+    if (dragCounterRef.current === 0) {
+      setIsDragging(false);
+    }
+  }, []);
+
+  const handleDragOver = useCallback((e: React.DragEvent) => {
+    e.preventDefault();
+    e.stopPropagation();
+  }, []);
+
+  const handleDrop = useCallback((e: React.DragEvent) => {
+    e.preventDefault();
+    e.stopPropagation();
+    dragCounterRef.current = 0;
+    setIsDragging(false);
+    if (e.dataTransfer.files && e.dataTransfer.files.length > 0) {
+      setPendingFiles((prev) => [...prev, ...Array.from(e.dataTransfer.files)]);
+    }
+  }, []);
+
   return (
-    <div className="flex min-h-0 min-w-0 flex-1 flex-col w-full">
+    <div
+      className="relative flex min-h-0 min-w-0 flex-1 flex-col w-full"
+      onDragEnter={handleDragEnter}
+      onDragLeave={handleDragLeave}
+      onDragOver={handleDragOver}
+      onDrop={handleDrop}
+    >
+      {isDragging && (
+        <div className="absolute inset-0 z-50 flex items-center justify-center bg-zinc-900/80 backdrop-blur-sm">
+          <div className="flex flex-col items-center gap-3 rounded-2xl border-2 border-dashed border-indigo-500 bg-zinc-800/90 px-12 py-10">
+            <Upload size={40} className="text-indigo-400" />
+            <p className="text-lg font-medium text-zinc-200">Solte os arquivos aqui</p>
+            <p className="text-sm text-zinc-400">Os arquivos serão anexados à mensagem</p>
+          </div>
+        </div>
+      )}
       <div className="flex min-h-0 min-w-0 flex-1 flex-col w-full overflow-y-auto px-4 py-6">
         <div className="flex w-full min-w-0 flex-1 flex-col space-y-3">
           {messages.length === 0 && (
