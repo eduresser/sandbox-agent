@@ -1,5 +1,6 @@
 import { useState, useEffect, useCallback } from "react";
-import { X, CheckCircle, XCircle, Trash2, RefreshCw } from "lucide-react";
+import { X, CheckCircle, XCircle, Trash2, RefreshCw, Loader2 } from "lucide-react";
+import { cn } from "../lib/utils";
 import type { Settings as SettingsType } from "../types";
 import {
   checkHealth,
@@ -198,35 +199,41 @@ export function Settings({ settings, onSave, onClose }: SettingsProps) {
             </p>
           ) : (
             <div className="space-y-2">
-              {sessions.map((s) => (
-                <div
-                  key={s.session_id}
-                  className="flex items-center gap-2 rounded-lg border border-zinc-800 bg-zinc-800/40 px-3 py-2 text-xs text-zinc-400"
-                >
-                  <span>{STATUS_ICONS[s.status] ?? "⚪"}</span>
-                  <div className="min-w-0 flex-1">
-                    <code className="block truncate text-zinc-300">
-                      {s.session_id}
-                    </code>
-                    <span className="text-zinc-500">
-                      {s.runtime} · {s.container_id}
-                    </span>
-                  </div>
-                  <button
-                    onClick={() => handleKill(s.session_id)}
-                    disabled={killingSessions.has(s.session_id)}
-                    className="ml-auto shrink-0 rounded p-1.5 text-zinc-500 transition-colors hover:bg-red-950/50 hover:text-red-400 disabled:opacity-50"
-                    title="Stop container"
+              {sessions.map((s) => {
+                const isKilling = killingSessions.has(s.session_id);
+                return (
+                  <div
+                    key={s.session_id}
+                    className={cn(
+                      "relative flex items-center gap-2 rounded-lg border border-zinc-800 bg-zinc-800/40 px-3 py-2 text-xs text-zinc-400",
+                      isKilling && "pointer-events-none",
+                    )}
                   >
-                    <Trash2
-                      size={14}
-                      className={
-                        killingSessions.has(s.session_id) ? "animate-pulse" : ""
-                      }
-                    />
-                  </button>
-                </div>
-              ))}
+                    {isKilling && (
+                      <div className="absolute inset-0 z-10 flex items-center justify-center rounded-lg bg-zinc-900/80">
+                        <Loader2 size={16} className="animate-spin text-zinc-400" />
+                      </div>
+                    )}
+                    <span className={cn(isKilling && "opacity-30")}>{STATUS_ICONS[s.status] ?? "⚪"}</span>
+                    <div className={cn("min-w-0 flex-1", isKilling && "opacity-30")}>
+                      <code className="block truncate text-zinc-300">
+                        {s.session_id}
+                      </code>
+                      <span className="text-zinc-500">
+                        {s.runtime} · {s.container_id}
+                      </span>
+                    </div>
+                    <button
+                      onClick={() => handleKill(s.session_id)}
+                      disabled={isKilling}
+                      className="ml-auto shrink-0 rounded p-1.5 text-zinc-500 transition-colors hover:bg-red-950/50 hover:text-red-400 disabled:opacity-50"
+                      title="Stop container"
+                    >
+                      <Trash2 size={14} />
+                    </button>
+                  </div>
+                );
+              })}
             </div>
           )}
         </div>
