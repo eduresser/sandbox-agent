@@ -26,6 +26,7 @@ export default function App() {
     setActiveThreadId,
     createThread,
     deleteThread,
+    deletingThreadId,
   } = useThreads();
 
   const { messages, streaming, sendMessage, editMessage, stopStreaming, loadMessages } = useChat(
@@ -52,6 +53,7 @@ export default function App() {
       <Sidebar
         threads={threads}
         activeThreadId={activeThreadId}
+        deletingThreadId={deletingThreadId}
         streaming={streaming}
         onSelectThread={setActiveThreadId}
         onNewThread={handleNewThread}
@@ -78,6 +80,7 @@ export default function App() {
           messages={messages}
         />
       )}
+
     </div>
   );
 }

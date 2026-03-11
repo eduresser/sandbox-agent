@@ -6,6 +6,7 @@ export function useThreads() {
   const [threads, setThreads] = useState<Thread[]>([]);
   const [activeThreadId, setActiveThreadId] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
+  const [deletingThreadId, setDeletingThreadId] = useState<string | null>(null);
 
   const refresh = useCallback(async () => {
     try {
@@ -31,10 +32,15 @@ export function useThreads() {
 
   const deleteThread = useCallback(
     async (threadId: string) => {
-      await api.deleteThread(threadId);
-      setThreads((prev) => prev.filter((t) => t.thread_id !== threadId));
-      if (activeThreadId === threadId) {
-        setActiveThreadId(null);
+      setDeletingThreadId(threadId);
+      try {
+        await api.deleteThread(threadId);
+        setThreads((prev) => prev.filter((t) => t.thread_id !== threadId));
+        if (activeThreadId === threadId) {
+          setActiveThreadId(null);
+        }
+      } finally {
+        setDeletingThreadId(null);
       }
     },
     [activeThreadId],
@@ -46,6 +52,7 @@ export function useThreads() {
     setActiveThreadId,
     createThread,
     deleteThread,
+    deletingThreadId,
     loading,
     refresh,
   };

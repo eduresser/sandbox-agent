@@ -1,5 +1,5 @@
 import { useState, useEffect, useCallback, useRef } from "react";
-import { Plus, Trash2, MessageSquare, Settings } from "lucide-react";
+import { Plus, Trash2, MessageSquare, Settings, Loader2 } from "lucide-react";
 import type { Thread, Message } from "../types";
 import { cn, timeAgo, extractTextContent } from "../lib/utils";
 import * as api from "../api/aegra";
@@ -7,6 +7,7 @@ import * as api from "../api/aegra";
 interface SidebarProps {
   threads: Thread[];
   activeThreadId: string | null;
+  deletingThreadId: string | null;
   streaming: boolean;
   onSelectThread: (id: string) => void;
   onNewThread: () => void;
@@ -17,6 +18,7 @@ interface SidebarProps {
 export function Sidebar({
   threads,
   activeThreadId,
+  deletingThreadId,
   streaming,
   onSelectThread,
   onNewThread,
@@ -95,20 +97,27 @@ export function Sidebar({
         {threads.map((thread) => {
           const elapsed = thread.updated_at ? timeAgo(thread.updated_at) : "";
           const preview = previews.get(thread.thread_id) ?? "";
+          const isDeleting = thread.thread_id === deletingThreadId;
 
           return (
             <div
               key={thread.thread_id}
               className={cn(
-                "group flex items-center gap-2 rounded-lg px-3 py-1.5 text-sm cursor-pointer transition-colors",
+                "relative group flex items-center gap-2 rounded-lg px-3 py-1.5 text-sm cursor-pointer transition-colors",
+                isDeleting && "pointer-events-none",
                 thread.thread_id === activeThreadId
                   ? "bg-zinc-800 text-zinc-100"
                   : "text-zinc-400 hover:bg-zinc-800/50 hover:text-zinc-200",
               )}
               onClick={() => onSelectThread(thread.thread_id)}
             >
-              <MessageSquare size={14} className="shrink-0" />
-              <div className="flex-1 min-w-0">
+              {isDeleting && (
+                <div className="absolute inset-0 z-10 flex items-center justify-center rounded-lg bg-zinc-900/80">
+                  <Loader2 size={16} className="animate-spin text-zinc-400" />
+                </div>
+              )}
+              <MessageSquare size={14} className={cn("shrink-0", isDeleting && "opacity-30")} />
+              <div className={cn("flex-1 min-w-0", isDeleting && "opacity-30")}>
                 <span className="block truncate leading-tight">
                   {preview || "New conversation"}
                 </span>

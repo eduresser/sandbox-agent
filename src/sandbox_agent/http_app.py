@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import json
 import logging
 import re
@@ -28,8 +29,25 @@ def _get_manager():
     return get_manager()
 
 
+def _cleanup_thread_background(thread_id: str) -> None:
+    try:
+        manager = _get_manager()
+        count = manager.cleanup_thread_sessions(thread_id)
+        logger.info(
+            "Thread delete cleanup: removed %d sessions for %s",
+            count,
+            thread_id[:12],
+        )
+    except Exception:
+        logger.warning(
+            "Thread delete cleanup failed for %s",
+            thread_id[:12],
+            exc_info=True,
+        )
+
+
 class ThreadDeleteCleanupMiddleware(BaseHTTPMiddleware):
-    """On DELETE /threads/{id}, clean up Docker sessions and storage."""
+    """On DELETE /threads/{id}, clean up Docker sessions and storage in background."""
 
     async def dispatch(self, request: Request, call_next) -> Response:
         response = await call_next(request)
@@ -45,20 +63,8 @@ class ThreadDeleteCleanupMiddleware(BaseHTTPMiddleware):
             return response
 
         thread_id = match.group(1)
-        try:
-            manager = _get_manager()
-            count = manager.cleanup_thread_sessions(thread_id)
-            logger.info(
-                "Thread delete cleanup: removed %d sessions for %s",
-                count,
-                thread_id[:12],
-            )
-        except Exception:
-            logger.warning(
-                "Thread delete cleanup failed for %s",
-                thread_id[:12],
-                exc_info=True,
-            )
+        loop = asyncio.get_event_loop()
+        loop.run_in_executor(None, _cleanup_thread_background, thread_id)
 
         return response
 
