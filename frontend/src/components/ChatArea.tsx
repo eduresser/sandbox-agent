@@ -76,8 +76,9 @@ export function ChatArea({
   };
 
   const handleFileSelect = (e: React.ChangeEvent<HTMLInputElement>) => {
-    if (e.target.files) {
-      setPendingFiles((prev) => [...prev, ...Array.from(e.target.files!)]);
+    if (e.target.files && e.target.files.length > 0) {
+      const newFiles = Array.from(e.target.files);
+      setPendingFiles((prev) => [...prev, ...newFiles]);
     }
     e.target.value = "";
   };
