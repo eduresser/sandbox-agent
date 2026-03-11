@@ -224,6 +224,81 @@ async def save_frontend_settings(body: FrontendSettings):
     return JSONResponse(result)
 
 
+# ── Active sandbox sessions management ─────────────────────────────────────
+
+
+def _runtime_from_image(image_tag: str) -> str:
+    """Extract runtime name from Docker image tag like 'sandbox-python:latest'."""
+    name = image_tag.split(":")[0]
+    return name.removeprefix("sandbox-") if name.startswith("sandbox-") else name
+
+
+@app.get("/sessions")
+async def list_sessions():
+    """Return all active sandbox containers (from Docker, enriched with in-memory info)."""
+    import docker
+
+    manager = _get_manager()
+    try:
+        containers = manager.client.containers.list(
+            filters={"label": "sandbox-agent=true"},
+        )
+    except docker.errors.DockerException:
+        logger.warning("Failed to list Docker containers", exc_info=True)
+        return JSONResponse([])
+
+    result = []
+    for container in containers:
+        sid = container.labels.get("session-id", container.short_id)
+        image_tag = ",".join(container.image.tags) if container.image.tags else ""
+        mem_info = manager.sessions.get(sid)
+        result.append({
+            "session_id": sid,
+            "container_id": container.short_id,
+            "container_name": container.name,
+            "runtime": mem_info.runtime if mem_info else _runtime_from_image(image_tag),
+            "status": container.status,
+            "thread_id": mem_info.thread_id if mem_info else None,
+            "created_at": (
+                mem_info.created_at.isoformat()
+                if mem_info
+                else container.attrs.get("Created", "")
+            ),
+            "last_activity": (
+                mem_info.last_activity.isoformat() if mem_info else None
+            ),
+        })
+    return JSONResponse(result)
+
+
+@app.delete("/sessions/{session_id}")
+async def kill_session(session_id: str):
+    """Stop and remove a sandbox session (tracked or orphaned)."""
+    manager = _get_manager()
+
+    if manager.stop_session(session_id):
+        return JSONResponse({"ok": True, "session_id": session_id})
+
+    try:
+        containers = manager.client.containers.list(
+            all=True,
+            filters={"label": f"session-id={session_id}"},
+        )
+        if not containers:
+            return JSONResponse(
+                {"error": "Session not found"}, status_code=404,
+            )
+        for c in containers:
+            c.stop(timeout=3)
+            c.remove(force=True)
+        return JSONResponse({"ok": True, "session_id": session_id})
+    except Exception:
+        logger.warning("Failed to kill session %s", session_id, exc_info=True)
+        return JSONResponse(
+            {"error": "Failed to stop session"}, status_code=500,
+        )
+
+
 @app.post("/threads/{thread_id}/files/upload")
 async def upload_thread_files(thread_id: str, files: list[UploadFile]):
     """Upload files to be available for import into sandbox sessions."""

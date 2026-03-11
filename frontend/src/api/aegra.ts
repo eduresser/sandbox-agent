@@ -43,6 +43,28 @@ export async function saveSettings(
   });
 }
 
+// ── Sandbox sessions ──────────────────────────────────────────────────────
+
+export interface ActiveSession {
+  session_id: string;
+  container_id: string;
+  runtime: string;
+  status: string;
+  thread_id: string | null;
+  created_at: string;
+  last_activity: string;
+}
+
+export async function listSessions(): Promise<ActiveSession[]> {
+  return request<ActiveSession[]>("/sessions");
+}
+
+export async function killSession(sessionId: string): Promise<void> {
+  await request(`/sessions/${sessionId}`, { method: "DELETE" });
+}
+
+// ── Threads ───────────────────────────────────────────────────────────────
+
 export async function createThread(
   metadata?: Record<string, unknown>,
 ): Promise<Thread> {

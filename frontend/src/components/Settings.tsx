@@ -1,14 +1,18 @@
-import { useState, useEffect } from "react";
-import { X, CheckCircle, XCircle } from "lucide-react";
-import type { Settings as SettingsType, Message } from "../types";
-import { extractSessions, type SessionStatus } from "../lib/utils";
-import { checkHealth } from "../api/aegra";
+import { useState, useEffect, useCallback } from "react";
+import { X, CheckCircle, XCircle, Trash2, RefreshCw } from "lucide-react";
+import type { Settings as SettingsType } from "../types";
+import {
+  checkHealth,
+  listSessions,
+  killSession,
+  type ActiveSession,
+} from "../api/aegra";
 
 interface SettingsProps {
   settings: SettingsType;
   onSave: (s: SettingsType) => void;
   onClose: () => void;
-  messages: Message[];
+  messages?: unknown[];
 }
 
 const STATUS_ICONS: Record<string, string> = {
@@ -18,20 +22,51 @@ const STATUS_ICONS: Record<string, string> = {
   dead: "⚫",
 };
 
-export function Settings({ settings, onSave, onClose, messages }: SettingsProps) {
+export function Settings({ settings, onSave, onClose }: SettingsProps) {
   const [form, setForm] = useState<SettingsType>({ ...settings });
   const [healthy, setHealthy] = useState<boolean | null>(null);
+  const [sessions, setSessions] = useState<ActiveSession[]>([]);
+  const [loadingSessions, setLoadingSessions] = useState(false);
+  const [killingSessions, setKillingSessions] = useState<Set<string>>(new Set());
+
+  const fetchSessions = useCallback(async () => {
+    setLoadingSessions(true);
+    try {
+      const data = await listSessions();
+      setSessions(data);
+    } catch {
+      setSessions([]);
+    } finally {
+      setLoadingSessions(false);
+    }
+  }, []);
 
   useEffect(() => {
     checkHealth().then(setHealthy);
-  }, []);
+    fetchSessions();
+  }, [fetchSessions]);
+
+  const handleKill = async (sessionId: string) => {
+    setKillingSessions((prev) => new Set(prev).add(sessionId));
+    try {
+      await killSession(sessionId);
+      setSessions((prev) => prev.filter((s) => s.session_id !== sessionId));
+    } catch {
+      // refresh list to get actual state
+      await fetchSessions();
+    } finally {
+      setKillingSessions((prev) => {
+        const next = new Set(prev);
+        next.delete(sessionId);
+        return next;
+      });
+    }
+  };
 
   const handleSave = () => {
     onSave(form);
     onClose();
   };
-
-  const sessions: Map<string, SessionStatus> = extractSessions(messages);
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 backdrop-blur-sm">
@@ -137,31 +172,64 @@ export function Settings({ settings, onSave, onClose, messages }: SettingsProps)
           </div>
         </div>
 
-        {/* Sandbox Sessions */}
-        {sessions.size > 0 && (
-          <div className="mt-5">
-            <div className="mb-2 border-t border-zinc-800 pt-4">
+        {/* Active Sandbox Sessions */}
+        <div className="mt-5">
+          <div className="mb-2 border-t border-zinc-800 pt-4">
+            <div className="flex items-center justify-between">
               <h3 className="text-sm font-semibold text-zinc-300">
-                Sandbox Sessions
+                Active Containers
               </h3>
+              <button
+                onClick={fetchSessions}
+                disabled={loadingSessions}
+                className="rounded p-1 text-zinc-500 transition-colors hover:bg-zinc-800 hover:text-zinc-300 disabled:opacity-50"
+                title="Refresh"
+              >
+                <RefreshCw
+                  size={14}
+                  className={loadingSessions ? "animate-spin" : ""}
+                />
+              </button>
             </div>
-            <div className="space-y-1.5">
-              {[...sessions.entries()].map(([sid, info]) => (
+          </div>
+          {sessions.length === 0 ? (
+            <p className="text-xs text-zinc-500">
+              {loadingSessions ? "Loading…" : "No active containers."}
+            </p>
+          ) : (
+            <div className="space-y-2">
+              {sessions.map((s) => (
                 <div
-                  key={sid}
-                  className="flex items-center gap-2 text-xs text-zinc-400"
+                  key={s.session_id}
+                  className="flex items-center gap-2 rounded-lg border border-zinc-800 bg-zinc-800/40 px-3 py-2 text-xs text-zinc-400"
                 >
-                  <span>{STATUS_ICONS[info.status] ?? "⚪"}</span>
-                  <code className="rounded bg-zinc-800 px-1 py-0.5">
-                    {sid}
-                  </code>
-                  {info.runtime && <span>({info.runtime})</span>}
-                  <span className="text-zinc-500">— {info.status}</span>
+                  <span>{STATUS_ICONS[s.status] ?? "⚪"}</span>
+                  <div className="min-w-0 flex-1">
+                    <code className="block truncate text-zinc-300">
+                      {s.session_id}
+                    </code>
+                    <span className="text-zinc-500">
+                      {s.runtime} · {s.container_id}
+                    </span>
+                  </div>
+                  <button
+                    onClick={() => handleKill(s.session_id)}
+                    disabled={killingSessions.has(s.session_id)}
+                    className="ml-auto shrink-0 rounded p-1.5 text-zinc-500 transition-colors hover:bg-red-950/50 hover:text-red-400 disabled:opacity-50"
+                    title="Stop container"
+                  >
+                    <Trash2
+                      size={14}
+                      className={
+                        killingSessions.has(s.session_id) ? "animate-pulse" : ""
+                      }
+                    />
+                  </button>
                 </div>
               ))}
             </div>
-          </div>
-        )}
+          )}
+        </div>
 
         <div className="mt-6 flex justify-end gap-3">
           <button
