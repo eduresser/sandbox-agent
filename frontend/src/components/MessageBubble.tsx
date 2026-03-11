@@ -1,4 +1,4 @@
-import { useState, useRef, useEffect } from "react";
+import { useState, useRef, useEffect, useCallback } from "react";
 import Markdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 import { Prism as SyntaxHighlighter } from "react-syntax-highlighter";
@@ -43,18 +43,45 @@ export function MessageBubble({
 }: MessageBubbleProps) {
   const [isEditing, setIsEditing] = useState(false);
   const [editContent, setEditContent] = useState("");
+  const [initialEditSize, setInitialEditSize] = useState<{ w: number; h: number } | null>(null);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
+  const bubbleRef = useRef<HTMLDivElement>(null);
+  const measureRef = useRef<HTMLDivElement>(null);
+  const editRowRef = useRef<HTMLDivElement>(null);
+
+  const resizeTextarea = useCallback(() => {
+    const ta = textareaRef.current;
+    const measure = measureRef.current;
+    const row = editRowRef.current;
+    if (!ta || !measure || !row) return;
+
+    const minW = initialEditSize?.w ?? 100;
+    const minH = initialEditSize?.h ?? 40;
+    const maxW = row.offsetWidth * 0.8;
+
+    const naturalW = measure.offsetWidth + 2;
+    ta.style.width = `${Math.min(Math.max(naturalW, minW), maxW)}px`;
+
+    ta.style.height = "auto";
+    ta.style.height = `${Math.max(ta.scrollHeight, minH)}px`;
+  }, [initialEditSize]);
+
   useEffect(() => {
     if (isEditing && textareaRef.current) {
+      resizeTextarea();
       textareaRef.current.focus();
       const len = textareaRef.current.value.length;
       textareaRef.current.setSelectionRange(len, len);
-      textareaRef.current.style.height = "auto";
-      textareaRef.current.style.height = `${textareaRef.current.scrollHeight}px`;
     }
-  }, [isEditing]);
+  }, [isEditing, resizeTextarea]);
 
   const handleEditStart = () => {
+    if (bubbleRef.current) {
+      setInitialEditSize({
+        w: bubbleRef.current.offsetWidth,
+        h: bubbleRef.current.offsetHeight,
+      });
+    }
     setEditContent(typeof message.content === "string" ? message.content : extractTextContent(message.content));
     setIsEditing(true);
   };
@@ -132,19 +159,38 @@ export function MessageBubble({
 
     if (isEditing) {
       return (
-        <div className="flex justify-end">
-          <div className="flex w-full max-w-[80%] flex-col gap-2">
+        <div ref={editRowRef} className="flex justify-end">
+          <div className="flex flex-col items-end gap-2">
+            <div
+              ref={measureRef}
+              aria-hidden="true"
+              style={{
+                position: "fixed",
+                left: -9999,
+                top: 0,
+                visibility: "hidden",
+                whiteSpace: "pre-wrap",
+                wordBreak: "break-word",
+                width: "max-content",
+                padding: "0.625rem 1rem",
+                fontSize: "0.875rem",
+                lineHeight: "1.25rem",
+                fontFamily: "inherit",
+                boxSizing: "border-box",
+              }}
+            >
+              {editContent || "\u00a0"}
+            </div>
             <textarea
               ref={textareaRef}
               value={editContent}
               onChange={(e) => {
                 setEditContent(e.target.value);
-                e.target.style.height = "auto";
-                e.target.style.height = `${e.target.scrollHeight}px`;
+                requestAnimationFrame(resizeTextarea);
               }}
               onKeyDown={handleEditKeyDown}
               rows={1}
-              className="w-full resize-none overflow-hidden rounded-2xl rounded-br-md border border-indigo-400 bg-indigo-700 px-4 py-2.5 text-sm text-white placeholder-indigo-300 focus:outline-none focus:ring-2 focus:ring-indigo-400"
+              className="resize-none overflow-hidden rounded-2xl rounded-br-md border border-indigo-400 bg-indigo-700 px-4 py-2.5 text-sm text-white placeholder-indigo-300 focus:outline-none focus:ring-2 focus:ring-indigo-400"
             />
             <div className="flex justify-end gap-2">
               <button
@@ -181,7 +227,7 @@ export function MessageBubble({
           )}
           <div className="flex flex-col items-end gap-1.5">
             {cleanText && (
-              <div className="rounded-2xl rounded-br-md bg-indigo-600 px-4 py-2.5 text-sm text-white">
+              <div ref={bubbleRef} className="rounded-2xl rounded-br-md bg-indigo-600 px-4 py-2.5 text-sm text-white">
                 <div className="whitespace-pre-wrap">{cleanText}</div>
               </div>
             )}
