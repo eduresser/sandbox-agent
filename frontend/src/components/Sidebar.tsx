@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback } from "react";
+import { useState, useEffect, useCallback, useRef } from "react";
 import { Plus, Trash2, MessageSquare, Settings } from "lucide-react";
 import type { Thread, Message } from "../types";
 import { cn, timeAgo, extractTextContent } from "../lib/utils";
@@ -7,6 +7,7 @@ import * as api from "../api/aegra";
 interface SidebarProps {
   threads: Thread[];
   activeThreadId: string | null;
+  streaming: boolean;
   onSelectThread: (id: string) => void;
   onNewThread: () => void;
   onDeleteThread: (id: string) => void;
@@ -16,12 +17,14 @@ interface SidebarProps {
 export function Sidebar({
   threads,
   activeThreadId,
+  streaming,
   onSelectThread,
   onNewThread,
   onDeleteThread,
   onOpenSettings,
 }: SidebarProps) {
   const [previews, setPreviews] = useState<Map<string, string | null>>(new Map());
+  const prevStreamingRef = useRef(false);
 
   const loadPreview = useCallback(async (threadId: string) => {
     try {
@@ -62,6 +65,15 @@ export function Sidebar({
       }
     }
   }, [threads, previews, loadPreview]);
+
+  useEffect(() => {
+    const wasStreaming = prevStreamingRef.current;
+    prevStreamingRef.current = streaming;
+
+    if (wasStreaming && !streaming && activeThreadId) {
+      loadPreview(activeThreadId);
+    }
+  }, [streaming, activeThreadId, loadPreview]);
 
   return (
     <aside className="flex h-full w-64 shrink-0 flex-col border-r border-zinc-800 bg-zinc-900">

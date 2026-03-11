@@ -52,6 +52,7 @@ export default function App() {
       <Sidebar
         threads={threads}
         activeThreadId={activeThreadId}
+        streaming={streaming}
         onSelectThread={setActiveThreadId}
         onNewThread={handleNewThread}
         onDeleteThread={deleteThread}
