@@ -14,6 +14,8 @@ from starlette.middleware.base import BaseHTTPMiddleware
 from starlette.requests import Request
 from starlette.responses import JSONResponse, Response, StreamingResponse
 
+from sandbox_agent.crypto import decrypt_value, encrypt_value, is_encrypted, mask_api_key
+
 logger = logging.getLogger(__name__)
 
 _THREAD_DELETE_PATTERN = re.compile(r"^/threads/([a-fA-F0-9\-]+)$")
@@ -156,7 +158,8 @@ def _backend_defaults() -> dict:
     return {
         "chatModel": s.CHAT_MODEL,
         "chatModelProvider": s.CHAT_MODEL_PROVIDER,
-        "chatModelApiKey": s.CHAT_MODEL_API_KEY,
+        "chatModelApiKey": "",
+        "chatModelApiKeyHint": mask_api_key(s.CHAT_MODEL_API_KEY),
         "chatModelBaseUrl": s.CHAT_MODEL_BASE_URL or "",
         "supportsVision": s.CHAT_MODEL_SUPPORTS_VISION
         if s.CHAT_MODEL_SUPPORTS_VISION is not None
@@ -169,18 +172,56 @@ async def get_frontend_settings():
     """Return persisted frontend settings merged over backend defaults."""
     defaults = _backend_defaults()
     saved = _load_frontend_settings()
-    return JSONResponse({**defaults, **saved})
+
+    raw_stored = saved.pop("chatModelApiKey", "")
+    if raw_stored:
+        decrypted = decrypt_value(raw_stored)
+        hint = mask_api_key(decrypted)
+        if not is_encrypted(raw_stored) and decrypted:
+            saved["chatModelApiKey"] = encrypt_value(decrypted)
+            _save_raw(saved)
+    else:
+        hint = defaults.get("chatModelApiKeyHint", "")
+
+    merged = {**defaults, **saved}
+    merged["chatModelApiKey"] = ""
+    merged["chatModelApiKeyHint"] = hint
+    return JSONResponse(merged)
+
+
+def _save_raw(data: dict) -> None:
+    """Write *data* to the settings file without any transformation."""
+    path = _settings_file()
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(json.dumps(data, indent=2), "utf-8")
 
 
 @app.put("/settings")
 async def save_frontend_settings(body: FrontendSettings):
     """Persist frontend settings to disk."""
     data = body.model_dump(exclude_none=True)
-    path = _settings_file()
-    path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(json.dumps(data, indent=2), "utf-8")
+
+    new_key = data.get("chatModelApiKey", "")
+    if new_key:
+        data["chatModelApiKey"] = encrypt_value(new_key)
+    else:
+        existing = _load_frontend_settings()
+        stored = existing.get("chatModelApiKey", "")
+        if stored:
+            data["chatModelApiKey"] = stored
+        else:
+            data.pop("chatModelApiKey", None)
+
+    _save_raw(data)
+
+    decrypted = decrypt_value(data.get("chatModelApiKey", ""))
     defaults = _backend_defaults()
-    return JSONResponse({**defaults, **data})
+    result = {**defaults, **data}
+    result["chatModelApiKey"] = ""
+    result["chatModelApiKeyHint"] = (
+        mask_api_key(decrypted) if decrypted else defaults.get("chatModelApiKeyHint", "")
+    )
+    return JSONResponse(result)
 
 
 @app.post("/threads/{thread_id}/files/upload")

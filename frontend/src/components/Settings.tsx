@@ -97,8 +97,13 @@ export function Settings({ settings, onSave, onClose, messages }: SettingsProps)
                 setForm({ ...form, chatModelApiKey: e.target.value })
               }
               className="w-full rounded-lg border border-zinc-700 bg-zinc-800 px-3 py-2 text-sm text-zinc-100 placeholder-zinc-500 focus:border-indigo-500 focus:outline-none"
-              placeholder="sk-..."
+              placeholder={form.chatModelApiKeyHint || "sk-..."}
             />
+            {form.chatModelApiKeyHint && !form.chatModelApiKey && (
+              <p className="mt-1 text-xs text-zinc-500">
+                Key stored securely. Leave blank to keep current.
+              </p>
+            )}
           </div>
 
           <div>

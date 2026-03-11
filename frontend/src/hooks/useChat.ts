@@ -81,10 +81,12 @@ export function useChat(
         const configurable: Record<string, string> = {
           chat_model: settings.chatModel,
           chat_model_provider: settings.chatModelProvider,
-          chat_model_api_key: settings.chatModelApiKey,
           chat_model_base_url: settings.chatModelBaseUrl ?? "",
           chat_model_supports_vision: String(settings.supportsVision),
         };
+        if (settings.chatModelApiKey) {
+          configurable.chat_model_api_key = settings.chatModelApiKey;
+        }
 
         for await (const event of api.streamRun(
           threadIdToUse,
@@ -133,14 +135,10 @@ export function useChat(
 
   const editMessage = useCallback(
     async (messageIndex: number, newContent: string) => {
-      if (!threadId || streaming || !newContent.trim()) return;
+      if (streaming || !newContent.trim()) return;
 
       const msgsToRemove = messages.slice(messageIndex);
-      const missingId = msgsToRemove.some((m) => !m.id);
-      if (missingId) {
-        console.error("Cannot edit: one or more messages lack an id.");
-        return;
-      }
+      const hasLocalOnlyMsgs = msgsToRemove.some((m) => !m.id);
 
       const editedMsg: Message = {
         ...messages[messageIndex],
@@ -151,12 +149,26 @@ export function useChat(
       setStreaming(true);
 
       try {
-        const removals = msgsToRemove.map((m) => ({
-          type: "remove",
-          id: m.id as string,
-          content: "",
-        }));
-        await api.updateThreadState(threadId, removals);
+        let threadIdToUse = threadId;
+        if (!threadIdToUse) {
+          try {
+            const thread = await createThread();
+            threadIdToUse = thread.thread_id;
+          } catch (err) {
+            console.error("Failed to create thread:", err);
+            setStreaming(false);
+            return;
+          }
+        }
+
+        if (!hasLocalOnlyMsgs) {
+          const removals = msgsToRemove.map((m) => ({
+            type: "remove",
+            id: m.id as string,
+            content: "",
+          }));
+          await api.updateThreadState(threadIdToUse, removals);
+        }
 
         const abortController = new AbortController();
         abortControllerRef.current = abortController;
@@ -164,13 +176,15 @@ export function useChat(
         const configurable: Record<string, string> = {
           chat_model: settings.chatModel,
           chat_model_provider: settings.chatModelProvider,
-          chat_model_api_key: settings.chatModelApiKey,
           chat_model_base_url: settings.chatModelBaseUrl ?? "",
           chat_model_supports_vision: String(settings.supportsVision),
         };
+        if (settings.chatModelApiKey) {
+          configurable.chat_model_api_key = settings.chatModelApiKey;
+        }
 
         for await (const event of api.streamRun(
-          threadId,
+          threadIdToUse,
           [{ role: "human", content: newContent }],
           configurable,
           abortController.signal,
@@ -211,7 +225,7 @@ export function useChat(
         setStreaming(false);
       }
     },
-    [threadId, streaming, messages, settings],
+    [threadId, streaming, messages, settings, createThread],
   );
 
   const stopStreaming = useCallback(() => {

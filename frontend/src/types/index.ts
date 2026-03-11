@@ -48,6 +48,7 @@ export interface Settings {
   chatModel: string;
   chatModelProvider: string;
   chatModelApiKey: string;
+  chatModelApiKeyHint: string;
   chatModelBaseUrl: string;
   supportsVision: boolean;
 }
@@ -56,6 +57,7 @@ export const DEFAULT_SETTINGS: Settings = {
   chatModel: "gpt-4o",
   chatModelProvider: "openai",
   chatModelApiKey: "",
+  chatModelApiKeyHint: "",
   chatModelBaseUrl: "",
   supportsVision: true,
 };

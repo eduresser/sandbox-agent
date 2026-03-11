@@ -465,7 +465,6 @@ def run_interactive_cli() -> None:
                     configurable={
                         "chat_model": settings.CHAT_MODEL,
                         "chat_model_provider": settings.CHAT_MODEL_PROVIDER,
-                        "chat_model_api_key": settings.CHAT_MODEL_API_KEY,
                     },
                 ):
                     if event.event != "values" or not isinstance(event.data, dict):

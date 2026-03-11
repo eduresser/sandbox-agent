@@ -23,6 +23,13 @@ def _setting_default(attr: str):
     return factory
 
 
+def _resolve_api_key_default():
+    """Resolve API key from encrypted frontend settings, falling back to env var."""
+    from sandbox_agent.crypto import resolve_api_key
+
+    return resolve_api_key()
+
+
 @dataclass(kw_only=True)
 class Configuration:
     """Runtime-configurable parameters for the Sandbox Agent.
@@ -40,7 +47,7 @@ class Configuration:
         metadata={"description": "LLM provider (e.g. 'openai', 'anthropic')."},
     )
     chat_model_api_key: Optional[str] = field(  # noqa: UP007
-        default_factory=_setting_default("CHAT_MODEL_API_KEY"),
+        default_factory=_resolve_api_key_default,
         metadata={"description": "API key for the LLM provider."},
     )
     chat_model_base_url: Optional[str] = field(  # noqa: UP007
@@ -67,6 +74,8 @@ class Configuration:
         init_kwargs: dict = {}
         for key, value in configurable.items():
             if key not in field_names:
+                continue
+            if key == "chat_model_api_key" and not value:
                 continue
             if key == "chat_model_supports_vision" and value is not None:
                 if isinstance(value, str):

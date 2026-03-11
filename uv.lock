@@ -3293,6 +3293,7 @@ source = { editable = "." }
 dependencies = [
     { name = "aegra-cli", version = "0.6.0", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version < '3.12'" },
     { name = "aegra-cli", version = "0.7.2", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version >= '3.12'" },
+    { name = "cryptography" },
     { name = "docker" },
     { name = "httpx" },
     { name = "langchain" },
@@ -3323,6 +3324,7 @@ dev = [
 [package.metadata]
 requires-dist = [
     { name = "aegra-cli", specifier = ">=0.6.0" },
+    { name = "cryptography", specifier = ">=43.0.0" },
     { name = "docker", specifier = ">=7.0.0" },
     { name = "httpx", specifier = ">=0.27.0" },
     { name = "keyring", marker = "extra == 'frontend'", specifier = ">=25.0.0" },

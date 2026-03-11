@@ -127,7 +127,7 @@ export function MessageBubble({
   if (!content.trim()) return null;
 
   if (isHuman) {
-    const canEdit = onEditMessage && !streaming && typeof message.content === "string" && !!message.id;
+    const canEdit = onEditMessage && !streaming && typeof message.content === "string";
     const { text: cleanText, files: attachedFiles } = parseUploadedFiles(content);
 
     if (isEditing) {
