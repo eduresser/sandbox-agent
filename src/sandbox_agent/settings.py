@@ -36,6 +36,8 @@ class Settings(BaseSettings):
     CONTAINER_MAX_SESSIONS: int = 5
     CONTAINER_MAX_SESSIONS_PER_THREAD: int = 3
     CONTAINER_EXECUTE_AS_ROOT: bool = False
+    CONTAINER_NETWORK_ENABLED: bool = False
+    CONTAINER_READ_ONLY_ROOTFS: bool = False
 
     # ── Session Lifecycle / GC ──
     SESSION_IDLE_TTL_SECONDS: int = 1800
@@ -51,6 +53,7 @@ class Settings(BaseSettings):
 
     # ── Storage (uploads + exports) ──
     STORAGE_DIR: str = "./storage"
+    IMPORT_ALLOWED_DIRS: str = ""
 
     # ── API (for download URLs in export_files) ──
     API_BASE_URL: str = "http://127.0.0.1:8000"

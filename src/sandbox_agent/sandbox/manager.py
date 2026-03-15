@@ -12,6 +12,8 @@ import atexit
 import contextvars
 import json
 import logging
+import posixpath
+import re
 import shlex
 import shutil
 import signal
@@ -76,6 +78,18 @@ RUNTIME_CONFIG: dict[str, dict[str, Any]] = {
         "install_user": "root",
     },
 }
+
+_SAFE_PKG_NAME_RE = re.compile(r"^@?[a-zA-Z0-9]([a-zA-Z0-9._/-]*[a-zA-Z0-9])?$")
+
+
+def _validate_package_names(packages: dict[str, str]) -> None:
+    """Reject package names that could be used for injection attacks (e.g. R string injection)."""
+    for name in packages:
+        if not _SAFE_PKG_NAME_RE.match(name):
+            raise ValueError(
+                f"Invalid package name: {name!r}. "
+                "Names must contain only letters, digits, dots, hyphens, underscores, and slashes."
+            )
 
 
 class ContainerDiedError(RuntimeError):
@@ -512,9 +526,11 @@ class SandboxManager:
         dependencies: dict[str, str] | None = None,
         mem_limit: str | None = None,
         cpu_quota: int | None = None,
-        network: bool = True,
+        network: bool | None = None,
     ) -> SessionInfo:
         settings = get_settings()
+        if network is None:
+            network = settings.CONTAINER_NETWORK_ENABLED
         thread_id = current_thread_id.get(None)
 
         if runtime not in RUNTIME_CONFIG:
@@ -554,11 +570,14 @@ class SandboxManager:
             cpu_quota=cpu_quota or settings.CONTAINER_CPU_QUOTA,
             pids_limit=settings.CONTAINER_PIDS_LIMIT,
             network_disabled=not network,
+            read_only=settings.CONTAINER_READ_ONLY_ROOTFS,
             tmpfs={
                 "/tmp": f"size={tmpfs_size},nosuid,uid={SANDBOX_UID},gid={SANDBOX_GID}",
                 "/workspace": f"size={tmpfs_size},uid={SANDBOX_UID},gid={SANDBOX_GID}",
                 "/home/sandbox": f"size={tmpfs_size},uid={SANDBOX_UID},gid={SANDBOX_GID}",
             },
+            cap_drop=["ALL"],
+            cap_add=["CHOWN", "DAC_OVERRIDE", "FOWNER", "KILL", "SETGID", "SETUID"],
             security_opt=["no-new-privileges"],
             labels={"sandbox-agent": "true", "session-id": session_id},
         )
@@ -653,6 +672,8 @@ class SandboxManager:
         """Install packages during session creation. Runs as root so packages
         land in the system site-packages / global node_modules.
         Captures stdout/stderr into the SessionInfo so callers can inspect them."""
+        _validate_package_names(packages)
+
         info = self.sessions[session_id]
         config = RUNTIME_CONFIG[info.runtime]
         container = self._containers[session_id]
@@ -898,6 +919,16 @@ class SandboxManager:
                     results.append(ImportFileResult(
                         source=src, destination=dst, success=False,
                         error="source or (session_id, path) is required",
+                    ))
+                    all_ok = False
+                    continue
+
+                try:
+                    self._validate_import_source(src)
+                except PermissionError as exc:
+                    results.append(ImportFileResult(
+                        source=src, destination=dst, success=False,
+                        error=str(exc),
                     ))
                     all_ok = False
                     continue
@@ -1262,15 +1293,46 @@ class SandboxManager:
     # ── Internal ───────────────────────────────────────
 
     def _normalize_container_path(self, path: str) -> str:
-        """Resolve path and ensure it is inside /workspace (prevents path traversal)."""
-        p = Path(path)
-        if not p.is_absolute():
-            p = Path("/workspace") / p
-        resolved = p.resolve()
-        workspace = Path("/workspace").resolve()
-        if not resolved.is_relative_to(workspace):
+        """Normalize container path and ensure it is inside /workspace (prevents path traversal).
+
+        Uses posixpath instead of Path.resolve() to avoid resolving against the
+        host filesystem — these paths only exist inside the container.
+        """
+        if not posixpath.isabs(path):
+            path = posixpath.join("/workspace", path)
+        normalized = posixpath.normpath(path)
+        if not (normalized == "/workspace" or normalized.startswith("/workspace/")):
             raise ValueError(f"Path outside /workspace: {path}")
-        return str(resolved)
+        return normalized
+
+    def _validate_import_source(self, src: str) -> None:
+        """Ensure *src* is within an allowed directory for host file imports."""
+        settings = get_settings()
+        src_resolved = Path(src).resolve()
+
+        storage = Path(settings.STORAGE_DIR)
+        if not storage.is_absolute():
+            storage = Path(__file__).resolve().parent.parent.parent / storage
+        storage = storage.resolve()
+
+        allowed = [storage]
+        if settings.IMPORT_ALLOWED_DIRS:
+            for d in settings.IMPORT_ALLOWED_DIRS.split(","):
+                d = d.strip()
+                if d:
+                    p = Path(d)
+                    if not p.is_absolute():
+                        p = Path(__file__).resolve().parent.parent.parent / p
+                    allowed.append(p.resolve())
+
+        for allowed_dir in allowed:
+            if src_resolved == allowed_dir or src_resolved.is_relative_to(allowed_dir):
+                return
+
+        raise PermissionError(
+            f"Import from '{src}' denied — path is outside allowed directories. "
+            f"Configure IMPORT_ALLOWED_DIRS to allow additional paths."
+        )
 
     def _check_session(self, session_id: str) -> None:
         if session_id not in self._containers:

@@ -315,11 +315,19 @@ async def upload_thread_files(thread_id: str, files: list[UploadFile]):
     for f in files:
         if not f.filename:
             continue
-        file_path = dest_dir / f.filename
+        relative = Path(f.filename)
+        safe_parts = [p for p in relative.parts if p not in (".", "..", "/")]
+        if not safe_parts:
+            continue
+        safe_relative = Path(*safe_parts)
+        file_path = dest_dir / safe_relative
+        if not file_path.resolve().is_relative_to(dest_dir.resolve()):
+            continue
+        file_path.parent.mkdir(parents=True, exist_ok=True)
         content = await f.read()
         file_path.write_bytes(content)
         results.append({
-            "name": f.filename,
+            "name": str(safe_relative),
             "path": str(file_path.resolve()),
             "size": len(content),
         })
