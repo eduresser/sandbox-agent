@@ -46,10 +46,10 @@ class Settings(BaseSettings):
     SESSION_MAX_ACTIVE_THREADS: int = 10
 
     # ── Output Limits (characters) ──
-    MAX_STDOUT_CHARS: int = 20_000
-    MAX_STDERR_CHARS: int = 10_000
-    MAX_RESULT_CHARS: int = 20_000
-    MAX_TRACEBACK_CHARS: int = 5_000
+    MAX_STDOUT_CHARS: int = 50000
+    MAX_STDERR_CHARS: int = 120000
+    MAX_RESULT_CHARS: int = 30000
+    MAX_TRACEBACK_CHARS: int = 8000
 
     # ── Storage (uploads + exports) ──
     STORAGE_DIR: str = "./storage"
@@ -62,11 +62,11 @@ class Settings(BaseSettings):
     MAX_ITERATIONS: int = 25
 
     # ── Checkpointer (PostgreSQL, shared with Aegra) ──
-    POSTGRES_USER: str = "sandbox_agent"
+    POSTGRES_USER: str
     POSTGRES_PASSWORD: str
-    POSTGRES_DB: str = "sandbox_agent"
-    POSTGRES_HOST: str = "localhost"
-    POSTGRES_PORT: str = "5432"
+    POSTGRES_DB: str
+    POSTGRES_HOST: str
+    POSTGRES_PORT: str
 
 
 @lru_cache(maxsize=1)
