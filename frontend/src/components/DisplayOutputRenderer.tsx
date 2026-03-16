@@ -58,33 +58,36 @@ const IFRAME_INJECT = `
   html, body {
     margin: 0 !important;
     padding: 0 !important;
-    min-height: 0 !important;
-    height: auto !important;
-    max-height: none !important;
-  }
-  body > div, body > section, body > main, body > article, body > header, body > footer {
-    min-height: 0 !important;
-    height: auto !important;
   }
 </style>
 <script>
 (function() {
-  function sendHeight() {
+  function sendSize() {
     var body = document.body;
     if (!body) return;
-    var saved = body.style.height;
+
+    // Measure intrinsic content width
+    var savedW = body.style.width;
+    body.style.width = 'max-content';
+    var w = body.scrollWidth;
+    body.style.width = savedW;
+
+    // Measure intrinsic content height
+    var savedH = body.style.height;
     body.style.height = '0px';
     var h = body.scrollHeight;
-    body.style.height = saved;
-    window.parent.postMessage({ type: '__sandbox_resize', height: h }, '*');
+    body.style.height = savedH;
+
+    window.parent.postMessage({ type: '__sandbox_resize', height: h, width: w }, '*');
   }
   if (typeof ResizeObserver !== 'undefined') {
-    new ResizeObserver(sendHeight).observe(document.body);
+    new ResizeObserver(sendSize).observe(document.body);
   }
-  window.addEventListener('load', sendHeight);
-  setTimeout(sendHeight, 50);
-  setTimeout(sendHeight, 300);
-  sendHeight();
+  window.addEventListener('load', sendSize);
+  setTimeout(sendSize, 50);
+  setTimeout(sendSize, 300);
+  setTimeout(sendSize, 1000);
+  sendSize();
 })();
 </script>
 `;
@@ -95,7 +98,7 @@ function stripAutoplay(raw: string): string {
 
 const HtmlOutput = memo(function HtmlOutput({ html: rawHtml }: { html: string }) {
   const iframeRef = useRef<HTMLIFrameElement>(null);
-  const [height, setHeight] = useState(200);
+  const [size, setSize] = useState({ width: 600, height: 200 });
 
   const html = useMemo(() => stripAutoplay(rawHtml), [rawHtml]);
 
@@ -107,7 +110,11 @@ const HtmlOutput = memo(function HtmlOutput({ html: rawHtml }: { html: string })
         typeof e.data.height === "number"
       ) {
         if (e.source === iframeRef.current?.contentWindow) {
-          setHeight(Math.min(Math.max(e.data.height + 16, 60), 2000));
+          const w = typeof e.data.width === "number" ? e.data.width : 600;
+          setSize({
+            width: Math.max(w + 2, 100),
+            height: Math.max(e.data.height + 16, 60),
+          });
         }
       }
     }
@@ -124,8 +131,8 @@ const HtmlOutput = memo(function HtmlOutput({ html: rawHtml }: { html: string })
       ref={iframeRef}
       srcDoc={srcdoc}
       sandbox="allow-scripts"
-      className="w-full rounded-lg border border-zinc-800 bg-white"
-      style={{ height, border: "none", minWidth: "min(40rem, 80vw)" }}
+      className="rounded-lg border border-zinc-800 bg-transparent"
+      style={{ width: size.width, height: size.height, maxWidth: "100%", border: "none" }}
       title="HTML output"
     />
   );
