@@ -58,6 +58,7 @@ const IFRAME_INJECT = `
   html, body {
     margin: 0 !important;
     padding: 0 !important;
+    overflow: hidden !important;
   }
   * {
     scrollbar-width: thin;
