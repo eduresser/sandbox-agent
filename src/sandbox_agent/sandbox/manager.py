@@ -526,11 +526,8 @@ class SandboxManager:
         dependencies: dict[str, str] | None = None,
         mem_limit: str | None = None,
         cpu_quota: int | None = None,
-        network: bool | None = None,
     ) -> SessionInfo:
         settings = get_settings()
-        if network is None:
-            network = settings.CONTAINER_NETWORK_ENABLED
         thread_id = current_thread_id.get(None)
 
         if runtime not in RUNTIME_CONFIG:
@@ -569,7 +566,7 @@ class SandboxManager:
             cpu_period=100_000,
             cpu_quota=cpu_quota or settings.CONTAINER_CPU_QUOTA,
             pids_limit=settings.CONTAINER_PIDS_LIMIT,
-            network_disabled=not network,
+            network_disabled=not settings.CONTAINER_NETWORK_ENABLED,
             read_only=settings.CONTAINER_READ_ONLY_ROOTFS,
             tmpfs={
                 "/tmp": f"size={tmpfs_size},nosuid,uid={SANDBOX_UID},gid={SANDBOX_GID}",
