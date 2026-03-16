@@ -59,6 +59,13 @@ const IFRAME_INJECT = `
     margin: 0 !important;
     padding: 0 !important;
   }
+  * {
+    scrollbar-width: thin;
+    scrollbar-color: #3f3f46 transparent;
+  }
+  ::-webkit-scrollbar { width: 6px; height: 6px; }
+  ::-webkit-scrollbar-track { background: transparent; }
+  ::-webkit-scrollbar-thumb { background-color: #3f3f46; border-radius: 3px; }
 </style>
 <script>
 (function() {
