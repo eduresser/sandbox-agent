@@ -56,7 +56,7 @@ RUNTIME_CONFIG: dict[str, dict[str, Any]] = {
         "dockerfile": "Dockerfile.python",
         "client_cmd": ["python", "/client/client_python.py"],
         "install_cmd": lambda pkgs: ["pip", "install", "--no-cache-dir", *pkgs],
-        "install_user": "root",
+        "install_user": None,
     },
     "node": {
         "image": "sandbox-node:latest",
@@ -666,14 +666,16 @@ class SandboxManager:
         )
 
     def _install_initial_packages(self, session_id: str, packages: dict[str, str]) -> None:
-        """Install packages during session creation. Runs as root so packages
-        land in the system site-packages / global node_modules.
-        Captures stdout/stderr into the SessionInfo so callers can inspect them."""
+        """Install packages during session creation.
+        Respects CONTAINER_EXECUTE_AS_ROOT: when True, runs as root so packages
+        land in system site-packages; when False, runs as the container's
+        default user (sandbox) and relies on PYTHONUSERBASE / user-library."""
         _validate_package_names(packages)
 
         info = self.sessions[session_id]
         config = RUNTIME_CONFIG[info.runtime]
         container = self._containers[session_id]
+        settings = get_settings()
 
         if info.runtime == "python":
             specs = [f"{n}=={v}" if v else n for n, v in packages.items()]
@@ -682,7 +684,7 @@ class SandboxManager:
         else:
             specs = [f"{n}@{v}" if v else n for n, v in packages.items()]
 
-        user = config.get("install_user")
+        user = "root" if settings.CONTAINER_EXECUTE_AS_ROOT else config.get("install_user")
         exit_code, output = container.exec_run(
             config["install_cmd"](specs),
             demux=True,
