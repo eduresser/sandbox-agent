@@ -288,8 +288,9 @@ Each container is created with the following protections:
 | Memory limit | `2048m` (no swap) | OOM-kill on overflow, host unaffected |
 | PID limit | `512` | Fork bombs are contained and killed |
 | CPU quota | `2` cores | Prevents CPU starvation on host |
-| Writable dirs | tmpfs only (`/workspace`, `/tmp`, `/home/sandbox`) | Cannot fill host disk |
+| Writable dirs | tmpfs (`/workspace`, `/tmp`, `/home/sandbox`) | tmpfs dirs never touch host disk |
 | tmpfs size | `200m` per mount | Limits in-container disk usage |
+| Read-only rootfs | Off by default (`CONTAINER_READ_ONLY_ROOTFS`) | When enabled, only tmpfs dirs are writable |
 | User | `sandbox` (UID 65532) | No root inside container |
 | Privileges | `no-new-privileges` | Cannot escalate via setuid/setgid |
 | Network | Configurable (enabled by default) | Can be disabled per session |
@@ -333,6 +334,8 @@ CONTAINER_EXECUTION_TIMEOUT_SECONDS=30  # Default code execution timeout
 CONTAINER_MAX_SESSIONS=5             # Max concurrent sessions (global)
 CONTAINER_MAX_SESSIONS_PER_THREAD=3  # Max sessions per conversation
 CONTAINER_EXECUTE_AS_ROOT=False      # Run terminal commands as root
+CONTAINER_READ_ONLY_ROOTFS=False     # Read-only root filesystem (tmpfs dirs always writable)
+CONTAINER_NETWORK_ENABLED=True       # Enable container networking (disable per session)
 CONTAINER_ORPHAN_MIN_AGE_SECONDS=300 # Min age before orphan cleanup (5 min)
 
 # ── Session Lifecycle / GC ──
@@ -342,13 +345,17 @@ SESSION_GC_INTERVAL_SECONDS=60       # GC check interval
 SESSION_MAX_ACTIVE_THREADS=10        # Max active threads before eviction
 
 # ── Output Truncation (characters) ──
-MAX_STDOUT_CHARS=20000
-MAX_STDERR_CHARS=10000
-MAX_RESULT_CHARS=20000
-MAX_TRACEBACK_CHARS=5000
+MAX_STDOUT_CHARS=50000
+MAX_STDERR_CHARS=120000
+MAX_RESULT_CHARS=30000
+MAX_TRACEBACK_CHARS=8000
+
+# ── Encryption ──
+ENCRYPTION_KEY=                      # Fernet key for settings encryption (optional)
 
 # ── Storage ──
 STORAGE_DIR=./storage                # Base dir for uploads
+IMPORT_ALLOWED_DIRS=                 # Comma-separated host dirs allowed for import (empty = all)
 
 # ── API ──
 API_BASE_URL=http://127.0.0.1:8000   # API URL (for export download URLs)
@@ -356,7 +363,7 @@ API_BASE_URL=http://127.0.0.1:8000   # API URL (for export download URLs)
 # ── Agent ──
 MAX_ITERATIONS=25                    # Max LangGraph iterations (recursion limit)
 
-# ── PostgreSQL (checkpointer + Aegra) ──
+# ── PostgreSQL (checkpointer + Aegra) — all required, no defaults ──
 POSTGRES_USER=sandbox_agent
 POSTGRES_PASSWORD=sandbox_agent_secret
 POSTGRES_DB=sandbox_agent
@@ -370,7 +377,7 @@ POSTGRES_PORT=5432
 |---|---|---|---|---|
 | Python | `python:3.12-slim` | IPython shell | UNIX socket | IPython + system libs |
 | Node.js | `node:22-slim` | `vm.createContext` | UNIX socket | Bare runtime |
-| R | `rocker/r-ver:4` | Dedicated R env | TCP `:8765` | tidyverse, data.table, ggplot2, readxl, haven, httr2, DBI, RSQLite, rmarkdown, knitr, devtools, glmnet, randomForest |
+| R | `rocker/r-ver:4` | Dedicated R env | TCP `:8765` | jsonlite, base64enc, tidyverse, data.table, readxl, haven, httr2, DBI, RSQLite, rmarkdown, knitr, devtools, glmnet, randomForest |
 
 The R container uses a compiled C client binary for IPC, while Python and Node.js use native clients.
 
@@ -436,6 +443,9 @@ uv run pytest tests/test_cli.py tests/test_http_app.py -v
 
 # Integration tests (requires Docker)
 uv run pytest tests/test_manager.py tests/test_tools.py tests/test_export_files.py tests/test_mcp.py -v
+
+# LangGraph debug trace (requires Docker + LLM API key)
+uv run pytest tests/test_langgraph_debug.py -v -s
 
 # API integration tests (requires Docker + running API: uv run sandbox-agent api dev)
 uv run pytest tests/test_api.py -v -s
