@@ -136,7 +136,7 @@ Custom endpoints:
 - `POST /threads/{thread_id}/files/upload` — uploads files to be available for import into sandbox sessions
 - `DELETE /threads/{thread_id}` — also cleans up Docker sessions and storage for that thread (via middleware)
 - `GET /settings` — returns persisted frontend settings merged over backend `.env` defaults
-- `PUT /settings` — persist frontend settings to disk (`storage/frontend_settings.json`)
+- `PUT /settings` — persist frontend settings to PostgreSQL (encrypted)
 
 ### React Frontend
 

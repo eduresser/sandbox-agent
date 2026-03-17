@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import asyncio
-import json
 import logging
 import re
 from pathlib import Path
@@ -15,7 +14,11 @@ from starlette.middleware.base import BaseHTTPMiddleware
 from starlette.requests import Request
 from starlette.responses import JSONResponse, Response, StreamingResponse
 
-from sandbox_agent.crypto import decrypt_value, encrypt_value, is_encrypted, mask_api_key
+from sandbox_agent.crypto import (
+    load_encrypted_settings,
+    mask_api_key,
+    save_encrypted_settings,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -143,18 +146,8 @@ class FrontendSettings(BaseModel):
     supportsVision: bool | None = None
 
 
-def _settings_file() -> Path:
-    return _get_storage_dir() / "frontend_settings.json"
-
-
 def _load_frontend_settings() -> dict:
-    path = _settings_file()
-    if path.exists():
-        try:
-            return json.loads(path.read_text("utf-8"))
-        except (json.JSONDecodeError, OSError):
-            logger.warning("Failed to read frontend settings file", exc_info=True)
-    return {}
+    return load_encrypted_settings()
 
 
 def _backend_defaults() -> dict:
@@ -179,15 +172,8 @@ async def get_frontend_settings():
     defaults = _backend_defaults()
     saved = _load_frontend_settings()
 
-    raw_stored = saved.pop("chatModelApiKey", "")
-    if raw_stored:
-        decrypted = decrypt_value(raw_stored)
-        hint = mask_api_key(decrypted)
-        if not is_encrypted(raw_stored) and decrypted:
-            saved["chatModelApiKey"] = encrypt_value(decrypted)
-            _save_raw(saved)
-    else:
-        hint = defaults.get("chatModelApiKeyHint", "")
+    stored_key = saved.get("chatModelApiKey", "")
+    hint = mask_api_key(stored_key) if stored_key else defaults.get("chatModelApiKeyHint", "")
 
     merged = {**defaults, **saved}
     merged["chatModelApiKey"] = ""
@@ -195,22 +181,13 @@ async def get_frontend_settings():
     return JSONResponse(merged)
 
 
-def _save_raw(data: dict) -> None:
-    """Write *data* to the settings file without any transformation."""
-    path = _settings_file()
-    path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(json.dumps(data, indent=2), "utf-8")
-
-
 @app.put("/settings")
 async def save_frontend_settings(body: FrontendSettings):
-    """Persist frontend settings to disk."""
+    """Persist frontend settings to database (encrypted)."""
     data = body.model_dump(exclude_none=True)
 
     new_key = data.get("chatModelApiKey", "")
-    if new_key:
-        data["chatModelApiKey"] = encrypt_value(new_key)
-    else:
+    if not new_key:
         existing = _load_frontend_settings()
         stored = existing.get("chatModelApiKey", "")
         if stored:
@@ -218,14 +195,14 @@ async def save_frontend_settings(body: FrontendSettings):
         else:
             data.pop("chatModelApiKey", None)
 
-    _save_raw(data)
+    save_encrypted_settings(data)
 
-    decrypted = decrypt_value(data.get("chatModelApiKey", ""))
+    plain_key = data.get("chatModelApiKey", "")
     defaults = _backend_defaults()
     result = {**defaults, **data}
     result["chatModelApiKey"] = ""
     result["chatModelApiKeyHint"] = (
-        mask_api_key(decrypted) if decrypted else defaults.get("chatModelApiKeyHint", "")
+        mask_api_key(plain_key) if plain_key else defaults.get("chatModelApiKeyHint", "")
     )
     return JSONResponse(result)
 
