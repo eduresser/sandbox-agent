@@ -1,15 +1,15 @@
 """Symmetric encryption for sensitive settings stored at rest.
 
-Uses Fernet (AES-128-CBC + HMAC-SHA256) with an auto-generated key stored
-in ``{STORAGE_DIR}/.encryption_key``.  The key file is created with mode
-0600 on first use.
+Uses Fernet (AES-128-CBC + HMAC-SHA256) with a key provided via the
+``ENCRYPTION_KEY`` environment variable / settings.  If absent, a new key
+is generated automatically and logged as a warning so the operator can
+persist it.
 """
 
 from __future__ import annotations
 
 import json
 import logging
-import os
 from functools import lru_cache
 from pathlib import Path
 
@@ -29,24 +29,19 @@ def _storage_dir() -> Path:
     return sd
 
 
-def _key_file() -> Path:
-    return _storage_dir() / ".encryption_key"
-
-
 @lru_cache(maxsize=1)
 def _get_fernet() -> Fernet:
-    key_path = _key_file()
-    if key_path.exists():
-        key = key_path.read_bytes().strip()
-    else:
-        key = Fernet.generate_key()
-        key_path.parent.mkdir(parents=True, exist_ok=True)
-        key_path.write_bytes(key)
-        try:
-            os.chmod(key_path, 0o600)
-        except OSError:
-            pass
-    return Fernet(key)
+    from sandbox_agent.settings import get_settings
+
+    key = get_settings().ENCRYPTION_KEY
+    if not key:
+        key = Fernet.generate_key().decode("ascii")
+        logger.warning(
+            "ENCRYPTION_KEY not set — generated ephemeral key. "
+            "Add ENCRYPTION_KEY=%s to your .env to persist encrypted data across restarts.",
+            key,
+        )
+    return Fernet(key.encode("ascii") if isinstance(key, str) else key)
 
 
 # ── Public helpers ──────────────────────────────────────────────────────

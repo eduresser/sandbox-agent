@@ -51,6 +51,9 @@ class Settings(BaseSettings):
     MAX_RESULT_CHARS: int = 30000
     MAX_TRACEBACK_CHARS: int = 8000
 
+    # ── Encryption ──
+    ENCRYPTION_KEY: str = ""
+
     # ── Storage (uploads + exports) ──
     STORAGE_DIR: str = "./storage"
     IMPORT_ALLOWED_DIRS: str = ""
