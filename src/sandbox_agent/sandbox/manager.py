@@ -364,7 +364,7 @@ class SandboxManager:
                 )
 
         for thread_id, reason in threads_to_evict:
-            logger.info("GC: evicting thread %s (%s) — cleaning sessions/files, keeping thread", thread_id[:12], reason)
+            logger.debug("GC: evicting thread %s (%s) — cleaning sessions/files, keeping thread", thread_id[:12], reason)
             self.cleanup_thread_sessions(thread_id)
 
     # ── Session hard-cap GC (safety net) ──────────────
