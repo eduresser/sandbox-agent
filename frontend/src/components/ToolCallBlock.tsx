@@ -134,7 +134,7 @@ export function ToolCallBlock({
 
   return (
     <div className="my-1.5">
-      <div className="rounded-lg border border-zinc-800 bg-zinc-900/50 text-xs">
+      <div className="w-fit max-w-full rounded-lg border border-zinc-800 bg-zinc-900/50 text-xs">
         <button
           onClick={() => setExpanded(!expanded)}
           className="flex w-full items-center gap-2 px-3 py-2 text-zinc-400 transition-colors hover:text-zinc-200"
@@ -309,7 +309,7 @@ function SessionCard({
   const bg = type === "stop" ? "bg-red-950/30 border-red-900/50" : "bg-blue-950/30 border-blue-900/50";
 
   return (
-    <div className={`mt-1.5 rounded-lg border px-3 py-2 text-xs ${bg}`}>
+    <div className={`mt-1.5 w-fit rounded-lg border px-3 py-2 text-xs ${bg}`}>
       <span>
         {statusIcon} Session{" "}
         <code className="rounded bg-zinc-800 px-1 py-0.5">{sessionId}</code>
@@ -348,7 +348,7 @@ function FileResults({
           return (
             <div
               key={i}
-              className="rounded-lg border border-red-900/50 bg-red-950/30 px-3 py-1.5 text-xs text-red-300"
+              className="w-fit rounded-lg border border-red-900/50 bg-red-950/30 px-3 py-1.5 text-xs text-red-300"
             >
               ❌ {displayName} — {error ?? "Failed"}
             </div>
@@ -358,7 +358,7 @@ function FileResults({
         return (
           <div
             key={i}
-            className="flex items-center gap-2 rounded-lg border border-zinc-800 bg-zinc-900/50 px-3 py-1.5 text-xs"
+            className="flex w-fit items-center gap-2 rounded-lg border border-zinc-800 bg-zinc-900/50 px-3 py-1.5 text-xs"
           >
             <span className="text-zinc-300">
               ✅ {displayName}
