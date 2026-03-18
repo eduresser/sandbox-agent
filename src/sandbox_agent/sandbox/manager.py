@@ -56,14 +56,12 @@ RUNTIME_CONFIG: dict[str, dict[str, Any]] = {
         "dockerfile": "Dockerfile.python",
         "client_cmd": ["python", "/client/client_python.py"],
         "install_cmd": lambda pkgs: ["pip", "install", "--no-cache-dir", *pkgs],
-        "install_user": None,
     },
     "node": {
         "image": "sandbox-node:latest",
         "dockerfile": "Dockerfile.node",
         "client_cmd": ["node", "/client/client_node.js"],
         "install_cmd": lambda pkgs: ["npm", "install", "--save", *pkgs],
-        "install_user": None,
     },
     "r": {
         "image": "sandbox-r:latest",
@@ -75,9 +73,20 @@ RUNTIME_CONFIG: dict[str, dict[str, Any]] = {
             + ",".join(f"'{p}'" for p in pkgs)
             + "), Ncpus=2L)",
         ],
-        "install_user": "root",
+        "override_settings": {
+            "CONTAINER_EXECUTE_AS_ROOT": True,
+            "CONTAINER_READ_ONLY_ROOTFS": False,
+        },
     },
 }
+
+def _runtime_setting(runtime: str, key: str) -> Any:
+    """Return a setting value, respecting per-runtime overrides."""
+    overrides = RUNTIME_CONFIG[runtime].get("override_settings", {})
+    if key in overrides:
+        return overrides[key]
+    return getattr(get_settings(), key)
+
 
 _SAFE_PKG_NAME_RE = re.compile(r"^@?[a-zA-Z0-9]([a-zA-Z0-9._/-]*[a-zA-Z0-9])?$")
 
@@ -567,7 +576,7 @@ class SandboxManager:
             cpu_quota=cpu_quota or settings.CONTAINER_CPU_QUOTA,
             pids_limit=settings.CONTAINER_PIDS_LIMIT,
             network_disabled=not settings.CONTAINER_NETWORK_ENABLED,
-            read_only=settings.CONTAINER_READ_ONLY_ROOTFS,
+            read_only=_runtime_setting(runtime, "CONTAINER_READ_ONLY_ROOTFS"),
             tmpfs={
                 "/tmp": f"size={tmpfs_size},nosuid,uid={SANDBOX_UID},gid={SANDBOX_GID}",
                 "/workspace": f"size={tmpfs_size},uid={SANDBOX_UID},gid={SANDBOX_GID}",
@@ -648,12 +657,14 @@ class SandboxManager:
         self._assert_container_alive(session_id)
         container = self._containers[session_id]
         settings = get_settings()
+        runtime = self.sessions[session_id].runtime
 
+        run_as_root = _runtime_setting(runtime, "CONTAINER_EXECUTE_AS_ROOT")
         exit_code, output = container.exec_run(
             ["sh", "-c", command],
             demux=True,
             workdir="/workspace",
-            user="root" if settings.CONTAINER_EXECUTE_AS_ROOT else None,
+            user="root" if run_as_root else None,
         )
 
         stdout = (output[0] or b"").decode(errors="replace")
@@ -667,15 +678,14 @@ class SandboxManager:
 
     def _install_initial_packages(self, session_id: str, packages: dict[str, str]) -> None:
         """Install packages during session creation.
-        Respects CONTAINER_EXECUTE_AS_ROOT: when True, runs as root so packages
-        land in system site-packages; when False, runs as the container's
-        default user (sandbox) and relies on PYTHONUSERBASE / user-library."""
+
+        Respects per-runtime ``override_settings`` and the global
+        ``CONTAINER_EXECUTE_AS_ROOT`` to decide which user runs the install."""
         _validate_package_names(packages)
 
         info = self.sessions[session_id]
         config = RUNTIME_CONFIG[info.runtime]
         container = self._containers[session_id]
-        settings = get_settings()
 
         if info.runtime == "python":
             specs = [f"{n}=={v}" if v else n for n, v in packages.items()]
@@ -684,7 +694,8 @@ class SandboxManager:
         else:
             specs = [f"{n}@{v}" if v else n for n, v in packages.items()]
 
-        user = "root" if settings.CONTAINER_EXECUTE_AS_ROOT else config.get("install_user")
+        run_as_root = _runtime_setting(info.runtime, "CONTAINER_EXECUTE_AS_ROOT")
+        user = "root" if run_as_root else None
         exit_code, output = container.exec_run(
             config["install_cmd"](specs),
             demux=True,
