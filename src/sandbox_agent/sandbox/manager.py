@@ -75,7 +75,6 @@ RUNTIME_CONFIG: dict[str, dict[str, Any]] = {
         ],
         "override_settings": {
             "CONTAINER_EXECUTE_AS_ROOT": True,
-            "CONTAINER_READ_ONLY_ROOTFS": False,
         },
     },
 }
@@ -576,7 +575,6 @@ class SandboxManager:
             cpu_quota=cpu_quota or settings.CONTAINER_CPU_QUOTA,
             pids_limit=settings.CONTAINER_PIDS_LIMIT,
             network_disabled=not settings.CONTAINER_NETWORK_ENABLED,
-            read_only=_runtime_setting(runtime, "CONTAINER_READ_ONLY_ROOTFS"),
             tmpfs={
                 "/tmp": f"size={tmpfs_size},nosuid,uid={SANDBOX_UID},gid={SANDBOX_GID}",
                 "/workspace": f"size={tmpfs_size},uid={SANDBOX_UID},gid={SANDBOX_GID}",

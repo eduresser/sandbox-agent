@@ -40,7 +40,6 @@ class Settings(BaseSettings):
     CONTAINER_MAX_SESSIONS: int = 5
     CONTAINER_MAX_SESSIONS_PER_THREAD: int = 3
     CONTAINER_EXECUTE_AS_ROOT: bool = False
-    CONTAINER_READ_ONLY_ROOTFS: bool = False
     CONTAINER_NETWORK_ENABLED: bool = True
 
     # ── Session Lifecycle / GC ──

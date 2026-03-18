@@ -290,7 +290,6 @@ Each container is created with the following protections:
 | CPU quota | `2` cores | Prevents CPU starvation on host |
 | Writable dirs | tmpfs (`/workspace`, `/tmp`, `/home/sandbox`) | tmpfs dirs never touch host disk |
 | tmpfs size | `200m` per mount | Limits in-container disk usage |
-| Read-only rootfs | Off by default (`CONTAINER_READ_ONLY_ROOTFS`) | When enabled, only tmpfs dirs are writable |
 | User | `sandbox` (UID 65532) | No root inside container |
 | Privileges | `no-new-privileges` | Cannot escalate via setuid/setgid |
 | Network | Configurable (enabled by default) | Can be disabled per session |
@@ -334,7 +333,6 @@ CONTAINER_EXECUTION_TIMEOUT_SECONDS=30  # Default code execution timeout
 CONTAINER_MAX_SESSIONS=5             # Max concurrent sessions (global)
 CONTAINER_MAX_SESSIONS_PER_THREAD=3  # Max sessions per conversation
 CONTAINER_EXECUTE_AS_ROOT=False      # Run terminal commands as root
-CONTAINER_READ_ONLY_ROOTFS=False     # Read-only root filesystem (tmpfs dirs always writable)
 CONTAINER_NETWORK_ENABLED=True       # Enable container networking (disable per session)
 CONTAINER_ORPHAN_MIN_AGE_SECONDS=300 # Min age before orphan cleanup (5 min)
 
