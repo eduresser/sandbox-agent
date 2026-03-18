@@ -122,7 +122,7 @@ export function MessageBubble({
 
     return (
       <div className="flex justify-start">
-        <div className="max-w-[85%]">
+        <div className="w-full max-w-[85%]">
           {thinking && <ThinkingBlock text={thinking} />}
           {toolCalls.map((tc, tcIndex) => {
             const toolMsg = toolResults.get(tc.id);

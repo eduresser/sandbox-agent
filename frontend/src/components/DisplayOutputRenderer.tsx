@@ -53,12 +53,17 @@ export function DisplayOutputList({ outputs }: { outputs: DisplayOutput[] }) {
   );
 }
 
+const MAX_IFRAME_HEIGHT = 5000;
+
 const IFRAME_INJECT = `
 <style>
   html, body {
     margin: 0 !important;
     padding: 0 !important;
     overflow: hidden !important;
+    height: auto !important;
+    min-height: 0 !important;
+    max-height: none !important;
   }
   * {
     scrollbar-width: thin;
@@ -70,26 +75,37 @@ const IFRAME_INJECT = `
 </style>
 <script>
 (function() {
+  var lastH = -1;
+  var rafId = 0;
+  var observer = null;
+
   function sendSize() {
     var body = document.body;
     if (!body) return;
 
-    // Measure intrinsic content width
-    var savedW = body.style.width;
-    body.style.width = 'max-content';
-    var w = body.scrollWidth;
-    body.style.width = savedW;
+    if (observer) observer.disconnect();
 
-    // Measure intrinsic content height
     var savedH = body.style.height;
     body.style.height = '0px';
     var h = body.scrollHeight;
     body.style.height = savedH;
 
-    window.parent.postMessage({ type: '__sandbox_resize', height: h, width: w }, '*');
+    if (observer) observer.observe(body);
+
+    if (h !== lastH) {
+      lastH = h;
+      window.parent.postMessage({ type: '__sandbox_resize', height: h }, '*');
+    }
   }
+
+  function scheduleSendSize() {
+    cancelAnimationFrame(rafId);
+    rafId = requestAnimationFrame(sendSize);
+  }
+
   if (typeof ResizeObserver !== 'undefined') {
-    new ResizeObserver(sendSize).observe(document.body);
+    observer = new ResizeObserver(scheduleSendSize);
+    observer.observe(document.body);
   }
   window.addEventListener('load', sendSize);
   setTimeout(sendSize, 50);
@@ -106,11 +122,14 @@ function stripAutoplay(raw: string): string {
 
 const HtmlOutput = memo(function HtmlOutput({ html: rawHtml }: { html: string }) {
   const iframeRef = useRef<HTMLIFrameElement>(null);
-  const [size, setSize] = useState({ width: 600, height: 200 });
+  const [height, setHeight] = useState(200);
 
   const html = useMemo(() => stripAutoplay(rawHtml), [rawHtml]);
 
   useEffect(() => {
+    let growthStreak = 0;
+    let prevH = 200;
+
     function handleMessage(e: MessageEvent) {
       if (
         e.data &&
@@ -118,11 +137,18 @@ const HtmlOutput = memo(function HtmlOutput({ html: rawHtml }: { html: string })
         typeof e.data.height === "number"
       ) {
         if (e.source === iframeRef.current?.contentWindow) {
-          const w = typeof e.data.width === "number" ? e.data.width : 600;
-          setSize({
-            width: Math.max(w + 2, 100),
-            height: Math.max(e.data.height + 16, 60),
-          });
+          const newH = Math.min(Math.max(e.data.height + 16, 60), MAX_IFRAME_HEIGHT);
+
+          const delta = newH - prevH;
+          if (delta > 0 && delta < 50) {
+            growthStreak++;
+            if (growthStreak >= 4) return;
+          } else {
+            growthStreak = 0;
+          }
+          prevH = newH;
+
+          setHeight(prev => prev === newH ? prev : newH);
         }
       }
     }
@@ -139,8 +165,8 @@ const HtmlOutput = memo(function HtmlOutput({ html: rawHtml }: { html: string })
       ref={iframeRef}
       srcDoc={srcdoc}
       sandbox="allow-scripts"
-      className="rounded-lg border border-zinc-800 bg-transparent"
-      style={{ width: size.width, height: size.height, maxWidth: "100%", border: "none" }}
+      className="w-full rounded-lg border border-zinc-800 bg-transparent"
+      style={{ height, border: "none" }}
       title="HTML output"
     />
   );
