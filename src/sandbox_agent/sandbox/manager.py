@@ -75,7 +75,7 @@ RUNTIME_CONFIG: dict[str, dict[str, Any]] = {
             + ",".join(f"'{p}'" for p in pkgs)
             + "), Ncpus=2L)",
         ],
-        "install_user": "root",
+        "install_user": None,
     },
 }
 
