@@ -119,15 +119,18 @@ execute <- function(code, timeout = 30) {
     }
 
     display_outputs <- list()
-    if (file.exists(plot_file) && file.info(plot_file)$size > 200L) {
+    has_base_plot <- file.exists(plot_file) && file.info(plot_file)$size > 200L
+    if (has_base_plot) {
       display_outputs[[length(display_outputs) + 1L]] <- list(
         type = "image/png", data = base64encode(plot_file)
       )
     }
 
-    ggplot_outs <- capture_ggplot(result_val$value)
-    if (length(ggplot_outs) > 0L) {
-      display_outputs <- c(display_outputs, ggplot_outs)
+    if (!has_base_plot) {
+      ggplot_outs <- capture_ggplot(result_val$value)
+      if (length(ggplot_outs) > 0L) {
+        display_outputs <- c(display_outputs, ggplot_outs)
+      }
     }
 
     widget_out <- capture_htmlwidget(result_val$value)
