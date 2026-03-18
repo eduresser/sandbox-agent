@@ -6,7 +6,11 @@ Loads from environment variables and ``.env`` file.
 from __future__ import annotations
 
 from functools import lru_cache
+from pathlib import Path
 
+from typing import Any
+
+from pydantic import field_validator, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
@@ -55,14 +59,35 @@ class Settings(BaseSettings):
     ENCRYPTION_KEY: str = ""
 
     # ── Storage (uploads + exports) ──
-    STORAGE_DIR: str = "./storage"
-    IMPORT_ALLOWED_DIRS: str = ""
+    STORAGE_DIR: Path = Path("./storage")
+    IMPORT_ALLOWED_DIRS: list[Path] = []
 
     # ── API (for download URLs in export_files) ──
     API_BASE_URL: str = "http://127.0.0.1:8000"
 
     # ── Agent ──
     MAX_ITERATIONS: int = 25
+
+    @field_validator("IMPORT_ALLOWED_DIRS", mode="before")
+    @classmethod
+    def _parse_import_dirs(cls, v: Any) -> list[Path]:
+        if isinstance(v, str):
+            return [Path(d.strip()) for d in v.split(",") if d.strip()]
+        return v
+
+    @model_validator(mode="after")
+    def _resolve_paths(self) -> "Settings":
+        root = Path(__file__).resolve().parent.parent.parent
+        self.STORAGE_DIR = (
+            self.STORAGE_DIR.resolve()
+            if self.STORAGE_DIR.is_absolute()
+            else (root / self.STORAGE_DIR).resolve()
+        )
+        self.IMPORT_ALLOWED_DIRS = [
+            p.resolve() if p.is_absolute() else (root / p).resolve()
+            for p in self.IMPORT_ALLOWED_DIRS
+        ]
+        return self
 
     # ── Checkpointer (PostgreSQL, shared with Aegra) ──
     POSTGRES_USER: str

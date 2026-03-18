@@ -75,7 +75,7 @@ RUNTIME_CONFIG: dict[str, dict[str, Any]] = {
             + ",".join(f"'{p}'" for p in pkgs)
             + "), Ncpus=2L)",
         ],
-        "install_user": None,
+        "install_user": "root",
     },
 }
 
@@ -1272,7 +1272,7 @@ class SandboxManager:
         self._db_remove_exported_thread(thread_id)
 
         # Remove STORAGE_DIR/thread_id/ (uploads + any session dirs)
-        thread_dir = Path(get_settings().STORAGE_DIR) / thread_id
+        thread_dir = get_settings().STORAGE_DIR / thread_id
         if thread_dir.exists():
             try:
                 shutil.rmtree(thread_dir, ignore_errors=True)
@@ -1309,20 +1309,7 @@ class SandboxManager:
         settings = get_settings()
         src_resolved = Path(src).resolve()
 
-        storage = Path(settings.STORAGE_DIR)
-        if not storage.is_absolute():
-            storage = Path(__file__).resolve().parent.parent.parent / storage
-        storage = storage.resolve()
-
-        allowed = [storage]
-        if settings.IMPORT_ALLOWED_DIRS:
-            for d in settings.IMPORT_ALLOWED_DIRS.split(","):
-                d = d.strip()
-                if d:
-                    p = Path(d)
-                    if not p.is_absolute():
-                        p = Path(__file__).resolve().parent.parent.parent / p
-                    allowed.append(p.resolve())
+        allowed = [settings.STORAGE_DIR, *settings.IMPORT_ALLOWED_DIRS]
 
         for allowed_dir in allowed:
             if src_resolved == allowed_dir or src_resolved.is_relative_to(allowed_dir):

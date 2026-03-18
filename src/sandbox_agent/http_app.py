@@ -128,11 +128,7 @@ async def download_thread_file(
 def _get_storage_dir() -> Path:
     from sandbox_agent.settings import get_settings
 
-    settings = get_settings()
-    sd = Path(settings.STORAGE_DIR)
-    if not sd.is_absolute():
-        sd = Path(__file__).resolve().parent.parent.parent / sd
-    return sd
+    return get_settings().STORAGE_DIR
 
 
 # ── Frontend settings persistence ──────────────────────────────────────────
